@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Text Slam / Impact</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Inter:wght@900&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Inter', sans-serif;
+  }
+
+  #canvas {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+  }
+
+  .word-slam {
+    position: absolute;
+    white-space: nowrap;
+    opacity: 0;
+    transform: scale(1.3);
+    transition: none;
+    /* Readability over video */
+    text-shadow:
+      0 0 20px rgba(0,0,0,0.9),
+      0 0 60px rgba(0,0,0,0.7),
+      0 4px 8px rgba(0,0,0,0.8),
+      0 0 120px rgba(0,0,0,0.4);
+  }
+
+  .word-slam.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .word-slam.hero {
+    font-family: 'Bebas Neue', sans-serif;
+    color: #ffffff;
+    letter-spacing: 0.04em;
+  }
+
+  .word-slam.accent {
+    font-family: 'Playfair Display', serif;
+    font-style: italic;
+    color: #e8c547;
+  }
+
+  .word-slam.connector {
+    font-family: 'Inter', sans-serif;
+    font-weight: 900;
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+</style>
+</head>
+<body>
+<div id="canvas"></div>
+
+<script>
+/**
+ * TEXT SLAM / IMPACT TEMPLATE
+ *
+ * Data contract:
+ * window.LYRICS_DATA = {
+ *   lines: [
+ *     {
+ *       text: "Full line text",
+ *       startTime: 0.0,      // seconds
+ *       endTime: 3.5,
+ *       words: [
+ *         {
+ *           text: "word",
+ *           startTime: 0.0,
+ *           endTime: 0.4,
+ *           role: "hero" | "accent" | "connector",  // optional, defaults to auto-assign
+ *           emphasis: 0-1  // optional, 0=least, 1=most important
+ *         }
+ *       ]
+ *     }
+ *   ]
+ * }
+ *
+ * window.FRAME_TIME = current time in seconds (set before calling renderFrame)
+ */
+
+const W = 1920;
+const H = 1080;
+const SNAP_DURATION = 0.1; // 3 frames at 30fps — the "slam" transition
+
+// Size hierarchy: extreme ratio between roles
+const SIZES = {
+  hero: { min: 120, max: 180 },
+  accent: { min: 64, max: 90 },
+  connector: { min: 28, max: 38 }
+};
+
+// Layout positions for poster-tight packing
+// Each layout is an array of {x, y, anchorX, anchorY} normalized 0-1
+const LAYOUTS = [
+  // Layout A: centered stack, hero middle
+  (words) => {
+    const cy = H / 2;
+    const cx = W / 2;
+    const results = [];
+    let yOffset = -((words.length - 1) * 0.5) * 60;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const size = getSize(w);
+      results.push({
+        x: cx,
+        y: cy + yOffset,
+        size,
+        textAlign: 'center'
+      });
+      yOffset += size * 0.85; // tight packing
+    }
+    return results;
+  },
+  // Layout B: staggered left-right
+  (words) => {
+    const results = [];
+    const startY = H * 0.25;
+    let y = startY;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const size = getSize(w);
+      const isLeft = i % 2 === 0;
+      results.push({
+        x: isLeft ? W * 0.15 : W * 0.85,
+        y: y,
+        size,
+        textAlign: isLeft ? 'left' : 'right'
+      });
+      y += size * 0.9;
+    }
+    return results;
+  },
+  // Layout C: diagonal sweep
+  (words) => {
+    const results = [];
+    for (let i = 0; i < words.length; i++) {
+      const t = words.length > 1 ? i / (words.length - 1) : 0.5;
+      const w = words[i];
+      const size = getSize(w);
+      results.push({
+        x: W * (0.15 + t * 0.7),
+        y: H * (0.2 + t * 0.6),
+        size,
+        textAlign: 'center'
+      });
+    }
+    return results;
+  },
+  // Layout D: big center hero, small words orbit
+  (words) => {
+    const results = [];
+    const heroIdx = words.findIndex(w => w._role === 'hero');
+    const hi = heroIdx >= 0 ? heroIdx : 0;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const size = getSize(w);
+      if (i === hi) {
+        results.push({ x: W / 2, y: H / 2, size, textAlign: 'center' });
+      } else {
+        const angle = ((i < hi ? i : i - 1) / (words.length - 1)) * Math.PI * 1.2 - Math.PI * 0.6;
+        const radius = 200 + size * 1.5;
+        results.push({
+          x: W / 2 + Math.cos(angle) * radius,
+          y: H / 2 + Math.sin(angle) * radius * 0.6,
+          size,
+          textAlign: 'center'
+        });
+      }
+    }
+    return results;
+  }
+];
+
+function getSize(word) {
+  const role = word._role || 'connector';
+  const range = SIZES[role];
+  const emphasis = word.emphasis || (role === 'hero' ? 1 : role === 'accent' ? 0.5 : 0.1);
+  return range.min + (range.max - range.min) * emphasis;
+}
+
+function assignRoles(words) {
+  if (words.length === 0) { return; }
+
+  // If roles already assigned, use them
+  if (words.some(w => w.role)) {
+    words.forEach(w => {
+      w._role = w.role || autoRole(w.text);
+    });
+    return;
+  }
+
+  // Auto-assign: longest word = hero, short common words = connector, rest = accent
+  const connectorWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'is', 'are', 'was', 'were', 'it', 'my', 'your', 'i', 'we', 'he', 'she', 'they', 'so', 'if', 'no', 'not', 'just', 'with']);
+  let maxLen = 0;
+  let heroIdx = 0;
+  words.forEach((w, i) => {
+    if (w.text.length > maxLen && !connectorWords.has(w.text.toLowerCase())) {
+      maxLen = w.text.length;
+      heroIdx = i;
+    }
+  });
+  words.forEach((w, i) => {
+    if (i === heroIdx) {
+      w._role = 'hero';
+    } else if (connectorWords.has(w.text.toLowerCase())) {
+      w._role = 'connector';
+    } else {
+      w._role = 'accent';
+    }
+  });
+}
+
+function autoRole(text) {
+  const connectorWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'is', 'are', 'was', 'were', 'it', 'my', 'your']);
+  if (connectorWords.has(text.toLowerCase())) { return 'connector'; }
+  return 'accent';
+}
+
+let elements = [];
+let currentLineIdx = -1;
+
+function buildLine(line, lineIdx) {
+  const canvas = document.getElementById('canvas');
+  // Clear previous
+  elements.forEach(el => el.remove());
+  elements = [];
+
+  const words = line.words || [];
+  assignRoles(words);
+
+  // Pick layout based on line index for variety
+  const layoutFn = LAYOUTS[lineIdx % LAYOUTS.length];
+  const positions = layoutFn(words);
+
+  words.forEach((word, i) => {
+    const el = document.createElement('div');
+    el.className = `word-slam ${word._role}`;
+    el.textContent = word._role === 'hero' ? word.text.toUpperCase() : word.text;
+    el.style.fontSize = positions[i].size + 'px';
+    el.style.left = positions[i].x + 'px';
+    el.style.top = positions[i].y + 'px';
+    el.style.textAlign = positions[i].textAlign;
+
+    // Anchor transform based on alignment
+    if (positions[i].textAlign === 'center') {
+      el.style.transform = 'translate(-50%, -50%) scale(1.3)';
+    } else if (positions[i].textAlign === 'right') {
+      el.style.transform = 'translate(-100%, -50%) scale(1.3)';
+    } else {
+      el.style.transform = 'translate(0, -50%) scale(1.3)';
+    }
+
+    el.dataset.startTime = word.startTime;
+    el.dataset.snapEnd = word.startTime + SNAP_DURATION;
+    canvas.appendChild(el);
+    elements.push(el);
+  });
+}
+
+window.renderFrame = function(time) {
+  time = time || window.FRAME_TIME || 0;
+  const data = window.LYRICS_DATA;
+  if (!data || !data.lines) { return; }
+
+  // Find active line
+  let activeLineIdx = -1;
+  for (let i = 0; i < data.lines.length; i++) {
+    const line = data.lines[i];
+    if (time >= line.startTime && time < line.endTime) {
+      activeLineIdx = i;
+      break;
+    }
+  }
+
+  // If no active line, clear
+  if (activeLineIdx === -1) {
+    if (currentLineIdx !== -1) {
+      elements.forEach(el => el.remove());
+      elements = [];
+      currentLineIdx = -1;
+    }
+    return;
+  }
+
+  // Build new line if changed
+  if (activeLineIdx !== currentLineIdx) {
+    currentLineIdx = activeLineIdx;
+    buildLine(data.lines[activeLineIdx], activeLineIdx);
+  }
+
+  // Update word visibility — snap in at word startTime
+  elements.forEach(el => {
+    const wordStart = parseFloat(el.dataset.startTime);
+    const snapEnd = parseFloat(el.dataset.snapEnd);
+    const lineEnd = data.lines[activeLineIdx].endTime;
+
+    if (time >= wordStart) {
+      // Snap-in: scale from 1.3 to 1.0 over SNAP_DURATION
+      const snapProgress = Math.min(1, (time - wordStart) / SNAP_DURATION);
+      const scale = 1.3 - 0.3 * snapProgress;
+      const opacity = snapProgress;
+
+      // Determine the base transform based on alignment
+      const textAlign = el.style.textAlign;
+      let translatePart;
+      if (textAlign === 'center') {
+        translatePart = 'translate(-50%, -50%)';
+      } else if (textAlign === 'right') {
+        translatePart = 'translate(-100%, -50%)';
+      } else {
+        translatePart = 'translate(0, -50%)';
+      }
+
+      el.style.transform = `${translatePart} scale(${scale})`;
+      el.style.opacity = opacity;
+
+      // Fade out near line end
+      const fadeStart = lineEnd - 0.2;
+      if (time > fadeStart) {
+        const fadeProgress = (time - fadeStart) / 0.2;
+        el.style.opacity = Math.max(0, 1 - fadeProgress);
+      }
+    } else {
+      el.style.opacity = 0;
+    }
+  });
+};
+
+// Auto-render loop for preview
+(function preview() {
+  if (window.FRAME_TIME !== undefined) {
+    window.renderFrame(window.FRAME_TIME);
+  }
+  requestAnimationFrame(preview);
+})();
+</script>
+</body>
+</html>

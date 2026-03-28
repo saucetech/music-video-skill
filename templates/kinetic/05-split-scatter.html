@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Split / Scatter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;800;900&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #canvas {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+  }
+
+  .scatter-word {
+    position: absolute;
+    white-space: nowrap;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 800;
+    color: #ffffff;
+    opacity: 0;
+    will-change: transform, opacity;
+    text-shadow:
+      0 0 25px rgba(0,0,0,0.9),
+      0 0 60px rgba(0,0,0,0.6),
+      0 3px 10px rgba(0,0,0,0.8);
+  }
+
+  .scatter-word.accent-word {
+    font-family: 'DM Serif Display', serif;
+    font-style: italic;
+    color: #e8c547;
+    text-shadow:
+      0 0 20px rgba(232, 197, 71, 0.5),
+      0 0 50px rgba(232, 197, 71, 0.2),
+      0 3px 10px rgba(0,0,0,0.8);
+  }
+
+  .scatter-word.old-line {
+    /* Words from the previous line that scatter outward */
+    color: rgba(255, 255, 255, 0.5);
+  }
+</style>
+</head>
+<body>
+<div id="canvas"></div>
+
+<script>
+/**
+ * SPLIT / SCATTER TEMPLATE
+ *
+ * When a new line starts, words from the previous line scatter/explode outward
+ * with random velocities and rotations, fading out. Simultaneously, the new
+ * line's words assemble into position from slightly offset origins.
+ *
+ * Best for: energetic pop, rock, rap with rapid line changes.
+ */
+
+var W = 1920;
+var H = 1080;
+var SCATTER_DURATION = 0.5;  // how long old words take to scatter away
+var ASSEMBLE_DURATION = 0.3; // how long new words take to assemble
+var WORD_STAGGER = 0.06;     // stagger between word appearances
+
+var currentElements = [];
+var scatterElements = [];
+var currentLineIdx = -1;
+var scatterStartTime = 0;
+
+// Generate random scatter targets for old words
+function generateScatterTarget(x, y) {
+  var angle = Math.random() * Math.PI * 2;
+  var distance = 600 + Math.random() * 800;
+  var rotation = (Math.random() - 0.5) * 120; // random rotation
+  return {
+    targetX: x + Math.cos(angle) * distance,
+    targetY: y + Math.sin(angle) * distance,
+    rotation: rotation,
+    scale: 0.3 + Math.random() * 0.5
+  };
+}
+
+function easeOutQuart(t) {
+  return 1 - Math.pow(1 - t, 4);
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function computeLinePositions(words, fontSize) {
+  // Center the words horizontally with spacing
+  var positions = [];
+  var charWidth = fontSize * 0.55; // approximate character width
+  var gap = fontSize * 0.3;
+
+  // Compute total width
+  var totalWidth = 0;
+  words.forEach(function(word, i) {
+    totalWidth += word.text.length * charWidth;
+    if (i < words.length - 1) { totalWidth += gap; }
+  });
+
+  var startX = (W - totalWidth) / 2;
+  var y = H / 2;
+  var x = startX;
+
+  words.forEach(function(word, i) {
+    var wordWidth = word.text.length * charWidth;
+    positions.push({
+      x: x + wordWidth / 2,
+      y: y,
+      width: wordWidth
+    });
+    x += wordWidth + gap;
+  });
+
+  return positions;
+}
+
+function buildLine(line, lineIdx) {
+  var canvas = document.getElementById('canvas');
+  var words = line.words || [];
+  var fontSize = words.length <= 4 ? 88 : words.length <= 7 ? 68 : 52;
+  var positions = computeLinePositions(words, fontSize);
+
+  currentElements = [];
+
+  words.forEach(function(word, i) {
+    var el = document.createElement('div');
+    var isAccent = word.role === 'accent' || word.emphasis > 0.7;
+    el.className = 'scatter-word' + (isAccent ? ' accent-word' : '');
+    el.textContent = word.text;
+    el.style.fontSize = fontSize + 'px';
+    el.style.left = positions[i].x + 'px';
+    el.style.top = positions[i].y + 'px';
+    el.style.transform = 'translate(-50%, -50%)';
+    el.style.opacity = '0';
+    el.dataset.startTime = String(word.startTime);
+    el.dataset.finalX = String(positions[i].x);
+    el.dataset.finalY = String(positions[i].y);
+
+    // Assemble from slightly below and offset
+    var offsetX = (Math.random() - 0.5) * 100;
+    var offsetY = 50 + Math.random() * 50;
+    el.dataset.originOffsetX = String(offsetX);
+    el.dataset.originOffsetY = String(offsetY);
+
+    canvas.appendChild(el);
+    currentElements.push(el);
+  });
+}
+
+function triggerScatter(time) {
+  // Move current elements to scatter list with random targets
+  scatterElements.forEach(function(item) { item.el.remove(); });
+  scatterElements = [];
+
+  currentElements.forEach(function(el) {
+    var x = parseFloat(el.dataset.finalX);
+    var y = parseFloat(el.dataset.finalY);
+    var target = generateScatterTarget(x, y);
+
+    el.classList.add('old-line');
+    scatterElements.push({
+      el: el,
+      startX: x,
+      startY: y,
+      targetX: target.targetX,
+      targetY: target.targetY,
+      rotation: target.rotation,
+      targetScale: target.scale
+    });
+  });
+
+  scatterStartTime = time;
+  currentElements = [];
+}
+
+window.renderFrame = function(time) {
+  time = time || window.FRAME_TIME || 0;
+  var data = window.LYRICS_DATA;
+  if (!data || !data.lines) { return; }
+
+  // Find active line
+  var activeLineIdx = -1;
+  for (var i = 0; i < data.lines.length; i++) {
+    var line = data.lines[i];
+    if (time >= line.startTime && time < line.endTime) {
+      activeLineIdx = i;
+      break;
+    }
+  }
+
+  // Update scatter elements (previous line scattering away)
+  if (scatterElements.length > 0) {
+    var scatterElapsed = time - scatterStartTime;
+    var scatterProgress = Math.min(1, scatterElapsed / SCATTER_DURATION);
+    var eased = easeOutQuart(scatterProgress);
+
+    scatterElements.forEach(function(item) {
+      var dx = (item.targetX - item.startX) * eased;
+      var dy = (item.targetY - item.startY) * eased;
+      var rot = item.rotation * eased;
+      var scale = 1 + (item.targetScale - 1) * eased;
+      var opacity = 1 - scatterProgress;
+
+      item.el.style.transform = 'translate(-50%, -50%) translate(' + dx + 'px, ' + dy + 'px) rotate(' + rot + 'deg) scale(' + scale + ')';
+      item.el.style.opacity = String(Math.max(0, opacity));
+    });
+
+    if (scatterProgress >= 1) {
+      scatterElements.forEach(function(item) { item.el.remove(); });
+      scatterElements = [];
+    }
+  }
+
+  if (activeLineIdx === -1) {
+    if (currentLineIdx !== -1 && currentElements.length > 0) {
+      // Line ended — scatter it
+      triggerScatter(time);
+      currentLineIdx = -1;
+    }
+    return;
+  }
+
+  // New line started
+  if (activeLineIdx !== currentLineIdx) {
+    if (currentLineIdx !== -1 && currentElements.length > 0) {
+      triggerScatter(time);
+    }
+    currentLineIdx = activeLineIdx;
+    buildLine(data.lines[activeLineIdx], activeLineIdx);
+  }
+
+  var activeLine = data.lines[activeLineIdx];
+
+  // Animate current line words assembling
+  currentElements.forEach(function(el) {
+    var wordStart = parseFloat(el.dataset.startTime);
+    var offsetX = parseFloat(el.dataset.originOffsetX);
+    var offsetY = parseFloat(el.dataset.originOffsetY);
+
+    if (time < wordStart) {
+      el.style.opacity = '0';
+      el.style.transform = 'translate(-50%, -50%) translate(' + offsetX + 'px, ' + offsetY + 'px) scale(0.85)';
+      return;
+    }
+
+    var elapsed = time - wordStart;
+    var progress = Math.min(1, elapsed / ASSEMBLE_DURATION);
+    var eased = easeOutCubic(progress);
+
+    var currentOffsetX = offsetX * (1 - eased);
+    var currentOffsetY = offsetY * (1 - eased);
+    var scale = 0.85 + 0.15 * eased;
+    var opacity = Math.min(1, progress * 2.5);
+
+    el.style.opacity = String(opacity);
+    el.style.transform = 'translate(-50%, -50%) translate(' + currentOffsetX + 'px, ' + currentOffsetY + 'px) scale(' + scale + ')';
+
+    // Fade out near line end
+    var fadeStart = activeLine.endTime - 0.2;
+    if (time > fadeStart) {
+      var fadeProgress = (time - fadeStart) / 0.2;
+      el.style.opacity = String(Math.max(0, opacity * (1 - fadeProgress)));
+    }
+  });
+};
+
+(function preview() {
+  if (window.FRAME_TIME !== undefined) {
+    window.renderFrame(window.FRAME_TIME);
+  }
+  requestAnimationFrame(preview);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>3D Perspective Fly-In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Raleway:ital,wght@0,300;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #canvas {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    perspective: 1200px;
+    perspective-origin: 50% 50%;
+  }
+
+  .fly-word {
+    position: absolute;
+    white-space: nowrap;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 700;
+    color: #ffffff;
+    opacity: 0;
+    will-change: transform, opacity;
+    text-shadow:
+      0 0 30px rgba(0,0,0,0.9),
+      0 0 80px rgba(0,0,0,0.6),
+      0 4px 12px rgba(0,0,0,0.8);
+  }
+
+  .fly-word.accent-word {
+    font-family: 'Raleway', sans-serif;
+    font-weight: 300;
+    font-style: italic;
+    color: #e8c547;
+    text-shadow:
+      0 0 20px rgba(232, 197, 71, 0.5),
+      0 0 60px rgba(232, 197, 71, 0.2),
+      0 4px 12px rgba(0,0,0,0.8);
+  }
+</style>
+</head>
+<body>
+<div id="canvas"></div>
+
+<script>
+/**
+ * 3D PERSPECTIVE FLY-IN TEMPLATE
+ *
+ * Words fly in from depth using CSS 3D transforms.
+ * Different words arrive from different directions — top, bottom, left, right, behind.
+ * Creates a cinematic "through the screen" effect.
+ *
+ * Best for: epic/dramatic songs, hip-hop, cinematic scores.
+ */
+
+var W = 1920;
+var H = 1080;
+var FLY_DURATION = 0.4; // seconds for fly-in animation
+var HOLD_AFTER_FLY = 0.1; // brief settle time after arriving
+
+// Fly-in directions: where the word starts before arriving at its final position
+var DIRECTIONS = [
+  // From behind (far Z)
+  function(finalX, finalY) {
+    return { x: finalX, y: finalY, z: -1500, rx: 20, ry: 0 };
+  },
+  // From above
+  function(finalX, finalY) {
+    return { x: finalX, y: finalY - 600, z: -400, rx: -30, ry: 0 };
+  },
+  // From below
+  function(finalX, finalY) {
+    return { x: finalX, y: finalY + 600, z: -400, rx: 30, ry: 0 };
+  },
+  // From left
+  function(finalX, finalY) {
+    return { x: finalX - 800, y: finalY, z: -300, rx: 0, ry: 40 };
+  },
+  // From right
+  function(finalX, finalY) {
+    return { x: finalX + 800, y: finalY, z: -300, rx: 0, ry: -40 };
+  },
+  // From behind + rotated
+  function(finalX, finalY) {
+    return { x: finalX + 200, y: finalY - 200, z: -2000, rx: -15, ry: 25 };
+  }
+];
+
+var elements = [];
+var currentLineIdx = -1;
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeOutBack(t) {
+  var c1 = 1.70158;
+  var c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function buildLine(line, lineIdx) {
+  var canvas = document.getElementById('canvas');
+  elements.forEach(function(el) { el.remove(); });
+  elements = [];
+
+  var words = line.words || [];
+  var wordCount = words.length;
+
+  // Compute final positions: centered arrangement
+  var fontSize = wordCount <= 3 ? 96 : wordCount <= 5 ? 80 : 64;
+  var accentSize = Math.round(fontSize * 0.75);
+
+  // Vertical stagger layout
+  var totalHeight = wordCount * fontSize * 0.85;
+  var startY = (H - totalHeight) / 2;
+
+  words.forEach(function(word, i) {
+    var el = document.createElement('div');
+    var isAccent = word.role === 'accent' || (i > 0 && i === wordCount - 1 && wordCount > 2);
+
+    el.className = 'fly-word' + (isAccent ? ' accent-word' : '');
+    el.textContent = isAccent ? word.text : word.text.toUpperCase();
+    el.style.fontSize = (isAccent ? accentSize : fontSize) + 'px';
+
+    // Final position
+    var finalX = W / 2;
+    var finalY = startY + i * fontSize * 0.85;
+    el.dataset.finalX = String(finalX);
+    el.dataset.finalY = String(finalY);
+    el.style.left = finalX + 'px';
+    el.style.top = finalY + 'px';
+    el.style.transform = 'translate(-50%, -50%) translateZ(-1500px)';
+
+    // Pick a fly direction — cycle through them offset by line index
+    var dirIdx = (i + lineIdx * 2) % DIRECTIONS.length;
+    var origin = DIRECTIONS[dirIdx](finalX, finalY);
+    el.dataset.originX = String(origin.x);
+    el.dataset.originY = String(origin.y);
+    el.dataset.originZ = String(origin.z);
+    el.dataset.originRx = String(origin.rx);
+    el.dataset.originRy = String(origin.ry);
+    el.dataset.startTime = String(word.startTime);
+
+    canvas.appendChild(el);
+    elements.push(el);
+  });
+}
+
+window.renderFrame = function(time) {
+  time = time || window.FRAME_TIME || 0;
+  var data = window.LYRICS_DATA;
+  if (!data || !data.lines) { return; }
+
+  var activeLineIdx = -1;
+  for (var i = 0; i < data.lines.length; i++) {
+    var line = data.lines[i];
+    if (time >= line.startTime && time < line.endTime) {
+      activeLineIdx = i;
+      break;
+    }
+  }
+
+  if (activeLineIdx === -1) {
+    if (currentLineIdx !== -1) {
+      elements.forEach(function(el) { el.remove(); });
+      elements = [];
+      currentLineIdx = -1;
+    }
+    return;
+  }
+
+  if (activeLineIdx !== currentLineIdx) {
+    currentLineIdx = activeLineIdx;
+    buildLine(data.lines[activeLineIdx], activeLineIdx);
+  }
+
+  var activeLine = data.lines[activeLineIdx];
+
+  elements.forEach(function(el) {
+    var wordStart = parseFloat(el.dataset.startTime);
+    var finalX = parseFloat(el.dataset.finalX);
+    var finalY = parseFloat(el.dataset.finalY);
+    var originX = parseFloat(el.dataset.originX);
+    var originY = parseFloat(el.dataset.originY);
+    var originZ = parseFloat(el.dataset.originZ);
+    var originRx = parseFloat(el.dataset.originRx);
+    var originRy = parseFloat(el.dataset.originRy);
+
+    if (time < wordStart) {
+      // Not yet — invisible at origin
+      el.style.opacity = '0';
+      el.style.transform = 'translate(-50%, -50%) translate3d(' +
+        (originX - finalX) + 'px, ' + (originY - finalY) + 'px, ' + originZ + 'px) ' +
+        'rotateX(' + originRx + 'deg) rotateY(' + originRy + 'deg)';
+      return;
+    }
+
+    var elapsed = time - wordStart;
+    var progress = Math.min(1, elapsed / FLY_DURATION);
+    var eased = easeOutBack(progress);
+
+    // Interpolate from origin to final
+    var currentZ = originZ * (1 - eased);
+    var currentDx = (originX - finalX) * (1 - eased);
+    var currentDy = (originY - finalY) * (1 - eased);
+    var currentRx = originRx * (1 - eased);
+    var currentRy = originRy * (1 - eased);
+    var opacity = Math.min(1, progress * 3); // fade in quickly
+
+    el.style.opacity = String(opacity);
+    el.style.transform = 'translate(-50%, -50%) translate3d(' +
+      currentDx + 'px, ' + currentDy + 'px, ' + currentZ + 'px) ' +
+      'rotateX(' + currentRx + 'deg) rotateY(' + currentRy + 'deg)';
+
+    // Fade out near line end
+    var fadeStart = activeLine.endTime - 0.3;
+    if (time > fadeStart) {
+      var fadeProgress = (time - fadeStart) / 0.3;
+      el.style.opacity = String(Math.max(0, opacity * (1 - fadeProgress)));
+      // Fly out forward (toward camera)
+      var flyOut = fadeProgress * 500;
+      el.style.transform = 'translate(-50%, -50%) translate3d(' +
+        currentDx + 'px, ' + currentDy + 'px, ' + (currentZ + flyOut) + 'px) ' +
+        'rotateX(' + currentRx + 'deg) rotateY(' + currentRy + 'deg)';
+    }
+  });
+};
+
+(function preview() {
+  if (window.FRAME_TIME !== undefined) {
+    window.renderFrame(window.FRAME_TIME);
+  }
+  requestAnimationFrame(preview);
+})();
+</script>
+</body>
+</html>

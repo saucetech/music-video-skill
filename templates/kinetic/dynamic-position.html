@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="base.css">
+<style>
+  :root {
+    --primary-color: #FFFFFF;
+    --accent-color: #FFD700;
+  }
+
+  .canvas { position: relative; }
+
+  .floating-word {
+    position: absolute;
+    font-family: 'Montserrat', 'Inter', sans-serif;
+    font-weight: 900;
+    color: var(--primary-color);
+    opacity: 0;
+    transform: scale(0.9);
+    transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+    text-shadow:
+      0 2px 10px rgba(0, 0, 0, 0.8),
+      0 4px 20px rgba(0, 0, 0, 0.5);
+    white-space: nowrap;
+  }
+
+  .floating-word.visible { opacity: 1; transform: scale(1); }
+  .floating-word.active {
+    color: var(--accent-color);
+    text-shadow: 0 0 30px rgba(255, 215, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.8);
+    transform: scale(1.05);
+  }
+  .floating-word.past { opacity: 0.3; transform: scale(0.95); }
+</style>
+</head>
+<body>
+<div class="canvas" id="canvas">
+  <div class="backdrop-gradient"></div>
+</div>
+
+<script>
+  window.LYRICS_DATA = window.LYRICS_DATA || { lines: [], style: {} };
+  window.FRAME_TIME = window.FRAME_TIME || 0;
+
+  var POSITION_SETS = [
+    [
+      { x: 15, y: 25, size: 100 },
+      { x: 55, y: 45, size: 80 },
+      { x: 25, y: 65, size: 110 },
+      { x: 65, y: 30, size: 90 },
+      { x: 40, y: 75, size: 85 },
+      { x: 75, y: 55, size: 95 }
+    ],
+    [
+      { x: 10, y: 20, size: 90 },
+      { x: 30, y: 35, size: 100 },
+      { x: 50, y: 50, size: 110 },
+      { x: 70, y: 65, size: 95 },
+      { x: 85, y: 78, size: 85 },
+      { x: 40, y: 25, size: 90 }
+    ],
+    [
+      { x: 35, y: 30, size: 100 },
+      { x: 50, y: 45, size: 120 },
+      { x: 40, y: 60, size: 90 },
+      { x: 60, y: 35, size: 85 },
+      { x: 55, y: 70, size: 95 },
+      { x: 30, y: 50, size: 80 }
+    ],
+    [
+      { x: 20, y: 20, size: 95 },
+      { x: 60, y: 22, size: 85 },
+      { x: 40, y: 18, size: 105 },
+      { x: 25, y: 72, size: 90 },
+      { x: 55, y: 75, size: 100 },
+      { x: 75, y: 70, size: 80 }
+    ]
+  ];
+
+  function updateFrame() {
+    var canvas = document.getElementById('canvas');
+    var time = window.FRAME_TIME;
+    var lines = window.LYRICS_DATA.lines;
+
+    if (window.LYRICS_DATA.style) {
+      var s = window.LYRICS_DATA.style;
+      if (s.primaryColor) { document.documentElement.style.setProperty('--primary-color', s.primaryColor); }
+      if (s.accentColor) { document.documentElement.style.setProperty('--accent-color', s.accentColor); }
+    }
+
+    var FADE_DURATION = 0.5;
+    var visibleLines = lines.filter(function(line) {
+      return time >= line.start - 0.1 && time <= line.end + FADE_DURATION;
+    });
+
+    // Remove all floating words but keep backdrop
+    var toRemove = canvas.querySelectorAll('.floating-word');
+    for (var r = 0; r < toRemove.length; r++) {
+      canvas.removeChild(toRemove[r]);
+    }
+
+    visibleLines.forEach(function(line) {
+      var lineIdx = lines.indexOf(line);
+      var positions = POSITION_SETS[lineIdx % POSITION_SETS.length];
+      var isPast = time > line.end;
+
+      line.words.forEach(function(word, wordIdx) {
+        var pos = positions[wordIdx % positions.length];
+        var wordEl = document.createElement('div');
+        wordEl.className = 'floating-word';
+
+        if (isPast) {
+          wordEl.classList.add('past');
+        } else if (time >= word.start && time <= word.end) {
+          wordEl.classList.add('visible', 'active');
+        } else if (time >= word.start) {
+          wordEl.classList.add('visible');
+        } else if (time >= line.start) {
+          wordEl.classList.add('visible');
+        }
+
+        wordEl.style.left = pos.x + '%';
+        wordEl.style.top = pos.y + '%';
+        wordEl.style.fontSize = pos.size + 'px';
+        wordEl.style.transform += ' translate(-50%, -50%)';
+        wordEl.textContent = word.text;
+
+        canvas.appendChild(wordEl);
+      });
+    });
+  }
+
+  window.renderFrame = function(time) {
+    window.FRAME_TIME = time;
+    updateFrame();
+  };
+
+  updateFrame();
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="base.css">
+<style>
+  :root {
+    --primary-color: #FFFFFF;
+    --accent-color: #FFD700;
+    --font-size: 90px;
+  }
+
+  .canvas {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .phrase-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: 80%;
+  }
+
+  .phrase {
+    font-family: 'Montserrat', 'Inter', sans-serif;
+    font-size: var(--font-size);
+    font-weight: 900;
+    color: var(--primary-color);
+    letter-spacing: -2px;
+    line-height: 1.1;
+    opacity: 0;
+    transform: scale(0.95);
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    text-shadow:
+      0 2px 10px rgba(0, 0, 0, 0.8),
+      0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .phrase.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .phrase.exiting {
+    opacity: 0;
+    transform: scale(1.02) translateY(-20px);
+  }
+
+  .phrase .word {
+    display: inline;
+    opacity: inherit;
+    transition: color 0.2s ease;
+  }
+
+  .phrase .word.active {
+    color: var(--accent-color);
+    text-shadow:
+      0 0 30px rgba(255, 215, 0, 0.5),
+      0 2px 10px rgba(0, 0, 0, 0.8);
+  }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="backdrop-gradient"></div>
+  <div class="phrase-container" id="phraseContainer"></div>
+</div>
+
+<script>
+  window.LYRICS_DATA = window.LYRICS_DATA || { lines: [], style: {} };
+  window.FRAME_TIME = window.FRAME_TIME || 0;
+
+  function updateFrame() {
+    var container = document.getElementById('phraseContainer');
+    var time = window.FRAME_TIME;
+    var lines = window.LYRICS_DATA.lines;
+
+    if (window.LYRICS_DATA.style) {
+      var s = window.LYRICS_DATA.style;
+      if (s.primaryColor) { document.documentElement.style.setProperty('--primary-color', s.primaryColor); }
+      if (s.accentColor) { document.documentElement.style.setProperty('--accent-color', s.accentColor); }
+      if (s.fontSize) { document.documentElement.style.setProperty('--font-size', s.fontSize); }
+    }
+
+    var currentLine = null;
+    for (var i = 0; i < lines.length; i++) {
+      if (time >= lines[i].start && time <= lines[i].end) {
+        currentLine = lines[i];
+        break;
+      }
+    }
+
+    if (!currentLine) {
+      while (container.firstChild) { container.removeChild(container.firstChild); }
+      return;
+    }
+
+    var phrase = container.querySelector('.phrase');
+    var isSameLine = phrase && phrase.dataset.lineStart === String(currentLine.start);
+
+    if (!isSameLine) {
+      while (container.firstChild) { container.removeChild(container.firstChild); }
+      phrase = document.createElement('div');
+      phrase.className = 'phrase visible';
+      phrase.dataset.lineStart = String(currentLine.start);
+      container.appendChild(phrase);
+    }
+
+    // Rebuild word spans safely
+    while (phrase.firstChild) { phrase.removeChild(phrase.firstChild); }
+    currentLine.words.forEach(function(w) {
+      var span = document.createElement('span');
+      span.className = 'word';
+      if (time >= w.start && time <= w.end) {
+        span.classList.add('active');
+      }
+      span.textContent = w.text + ' ';
+      phrase.appendChild(span);
+    });
+  }
+
+  window.renderFrame = function(time) {
+    window.FRAME_TIME = time;
+    updateFrame();
+  };
+
+  updateFrame();
+</script>
+</body>
+</html>

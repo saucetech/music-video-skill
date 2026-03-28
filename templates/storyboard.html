@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Storyboard Review</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0f;
+    color: #e0e0e0;
+    line-height: 1.6;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 2rem 3rem;
+    border-bottom: 1px solid rgba(255, 215, 0, 0.2);
+  }
+
+  .header h1 { font-size: 2rem; font-weight: 700; color: #fff; margin-bottom: 0.25rem; }
+  .header .subtitle { color: #888; font-size: 0.95rem; }
+  .header .meta { display: flex; gap: 2rem; margin-top: 1rem; font-size: 0.85rem; color: #aaa; }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+
+  .scene-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(600px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .scene-card {
+    background: #14141f;
+    border: 1px solid #2a2a3e;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .scene-card:hover { border-color: rgba(255, 215, 0, 0.4); }
+  .scene-card.approved { border-color: #22c55e; }
+  .scene-card.rejected { border-color: #ef4444; }
+
+  .scene-image {
+    width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: #1a1a2e;
+  }
+
+  .scene-info { padding: 1.25rem; }
+  .scene-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .scene-number { font-weight: 700; font-size: 1.1rem; color: #FFD700; }
+  .scene-time { font-size: 0.85rem; color: #888; font-family: 'SF Mono', monospace; }
+
+  .scene-lyrics {
+    background: rgba(255, 215, 0, 0.05);
+    border-left: 3px solid #FFD700;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    font-style: italic; color: #ccc; font-size: 0.9rem;
+  }
+
+  .scene-description { font-size: 0.9rem; color: #aaa; margin-bottom: 1rem; }
+
+  .scene-details { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.8rem; margin-bottom: 1rem; }
+  .detail-label { color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+  .detail-value { color: #bbb; }
+
+  .scene-actions { display: flex; gap: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #2a2a3e; }
+
+  .btn {
+    padding: 0.5rem 1rem; border: none; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.2s; flex: 1; text-align: center;
+  }
+  .btn-approve { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3); }
+  .btn-approve:hover { background: rgba(34, 197, 94, 0.25); }
+  .btn-reject { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+  .btn-reject:hover { background: rgba(239, 68, 68, 0.25); }
+  .btn-edit { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
+  .btn-edit:hover { background: rgba(59, 130, 246, 0.25); }
+
+  .summary-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #14141f; border-top: 1px solid #2a2a3e;
+    padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; z-index: 100;
+  }
+  .summary-stats { display: flex; gap: 2rem; font-size: 0.9rem; }
+  .stat { display: flex; align-items: center; gap: 0.5rem; }
+  .stat-approved { color: #22c55e; }
+  .stat-pending { color: #FFD700; }
+  .stat-rejected { color: #ef4444; }
+
+  .btn-proceed {
+    background: linear-gradient(135deg, #FFD700, #FFA500); color: #000;
+    padding: 0.75rem 2rem; border: none; border-radius: 8px;
+    font-weight: 700; font-size: 1rem; cursor: pointer;
+    opacity: 0.5; pointer-events: none; transition: opacity 0.2s;
+  }
+  .btn-proceed.ready { opacity: 1; pointer-events: auto; }
+  .btn-proceed.ready:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3); }
+
+  .bottom-spacer { height: 80px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1 id="songTitle">Storyboard Review</h1>
+  <div class="subtitle" id="songSubtitle">Review and approve each scene before video generation</div>
+  <div class="meta" id="metaContainer"></div>
+</div>
+
+<div class="container">
+  <div class="scene-grid" id="sceneGrid"></div>
+  <div class="bottom-spacer"></div>
+</div>
+
+<div class="summary-bar">
+  <div class="summary-stats">
+    <div class="stat stat-approved"><span id="approvedCount">0</span> Approved</div>
+    <div class="stat stat-pending"><span id="pendingCount">0</span> Pending</div>
+    <div class="stat stat-rejected"><span id="rejectedCount">0</span> Rejected</div>
+  </div>
+  <button class="btn-proceed" id="proceedBtn">Proceed to Video Generation</button>
+</div>
+
+<script>
+  // Data injection point — replace with actual scene data
+  const STORYBOARD_DATA = {
+    songTitle: "Song Title",
+    songArtist: "Artist",
+    duration: "3:30",
+    scenes: []
+  };
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text) { e.textContent = text; }
+    return e;
+  }
+
+  function renderStoryboard() {
+    document.getElementById('songTitle').textContent = STORYBOARD_DATA.songTitle + ' — Storyboard';
+    document.getElementById('songSubtitle').textContent = STORYBOARD_DATA.songArtist + ' | Review and approve each scene';
+
+    const meta = document.getElementById('metaContainer');
+    meta.appendChild(el('span', null, 'Duration: ' + STORYBOARD_DATA.duration));
+    meta.appendChild(el('span', null, 'Scenes: ' + STORYBOARD_DATA.scenes.length));
+
+    const imgCost = (STORYBOARD_DATA.scenes.length * 0.04).toFixed(2);
+    const vidCost = (STORYBOARD_DATA.scenes.length * 0.59).toFixed(2);
+    meta.appendChild(el('span', null, 'Est. cost: $' + imgCost + ' (images) + $' + vidCost + ' (video) = $' + (parseFloat(imgCost) + parseFloat(vidCost)).toFixed(2)));
+
+    const grid = document.getElementById('sceneGrid');
+
+    STORYBOARD_DATA.scenes.forEach(function(scene) {
+      const card = el('div', 'scene-card');
+      card.id = 'scene-' + scene.number;
+      card.dataset.status = 'pending';
+
+      const img = el('img', 'scene-image');
+      img.src = scene.imageSrc;
+      img.alt = 'Scene ' + scene.number;
+      img.onerror = function() { this.style.background = '#1a1a2e'; };
+      card.appendChild(img);
+
+      const info = el('div', 'scene-info');
+
+      const header = el('div', 'scene-header');
+      header.appendChild(el('span', 'scene-number', 'Scene ' + scene.number));
+      header.appendChild(el('span', 'scene-time', scene.startTime + ' — ' + scene.endTime));
+      info.appendChild(header);
+
+      info.appendChild(el('div', 'scene-lyrics', scene.lyrics));
+      info.appendChild(el('div', 'scene-description', scene.description));
+
+      const details = el('div', 'scene-details');
+      details.appendChild(el('div', 'detail-label', 'Camera'));
+      details.appendChild(el('div', 'detail-value', scene.camera));
+      details.appendChild(el('div', 'detail-label', 'Lighting'));
+      details.appendChild(el('div', 'detail-value', scene.lighting));
+      details.appendChild(el('div', 'detail-label', 'Mood'));
+      details.appendChild(el('div', 'detail-value', scene.mood));
+      info.appendChild(details);
+
+      const actions = el('div', 'scene-actions');
+      var btnApprove = el('button', 'btn btn-approve', 'Approve');
+      btnApprove.addEventListener('click', function() { setStatus(scene.number, 'approved'); });
+      actions.appendChild(btnApprove);
+
+      var btnEdit = el('button', 'btn btn-edit', 'Edit Prompt');
+      btnEdit.addEventListener('click', function() { editPrompt(scene.number); });
+      actions.appendChild(btnEdit);
+
+      var btnReject = el('button', 'btn btn-reject', 'Regenerate');
+      btnReject.addEventListener('click', function() { setStatus(scene.number, 'rejected'); });
+      actions.appendChild(btnReject);
+
+      info.appendChild(actions);
+      card.appendChild(info);
+      grid.appendChild(card);
+    });
+
+    document.getElementById('proceedBtn').addEventListener('click', proceed);
+    updateCounts();
+  }
+
+  function setStatus(sceneNum, status) {
+    var card = document.getElementById('scene-' + sceneNum);
+    card.dataset.status = status;
+    card.className = 'scene-card ' + status;
+    updateCounts();
+  }
+
+  function editPrompt(sceneNum) {
+    var newPrompt = prompt('Edit prompt for Scene ' + sceneNum + ':');
+    if (newPrompt) {
+      alert('Scene ' + sceneNum + ' will be regenerated with new prompt.');
+      setStatus(sceneNum, 'pending');
+    }
+  }
+
+  function updateCounts() {
+    var cards = document.querySelectorAll('.scene-card');
+    var approved = 0, pending = 0, rejected = 0;
+    cards.forEach(function(card) {
+      switch(card.dataset.status) {
+        case 'approved': approved++; break;
+        case 'rejected': rejected++; break;
+        default: pending++; break;
+      }
+    });
+    document.getElementById('approvedCount').textContent = approved;
+    document.getElementById('pendingCount').textContent = pending;
+    document.getElementById('rejectedCount').textContent = rejected;
+
+    var btn = document.getElementById('proceedBtn');
+    if (approved === cards.length && cards.length > 0) {
+      btn.classList.add('ready');
+    } else {
+      btn.classList.remove('ready');
+    }
+  }
+
+  function proceed() { alert('All scenes approved! Proceeding to video generation...'); }
+
+  renderStoryboard();
+</script>
+</body>
+</html>

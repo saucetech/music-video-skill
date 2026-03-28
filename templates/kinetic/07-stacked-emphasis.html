@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Stacked Emphasis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Inter:wght@400;600;900&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #canvas {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+  }
+
+  .stacked-word {
+    position: absolute;
+    white-space: nowrap;
+    opacity: 0;
+    will-change: transform, opacity;
+    text-shadow:
+      0 0 25px rgba(0,0,0,0.9),
+      0 0 70px rgba(0,0,0,0.6),
+      0 4px 12px rgba(0,0,0,0.8);
+  }
+
+  .stacked-word.key-word {
+    font-family: 'Bebas Neue', sans-serif;
+    color: #ffffff;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .stacked-word.support-word {
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.5);
+    letter-spacing: 0.02em;
+  }
+
+  .stacked-word.emotional-word {
+    font-family: 'Playfair Display', serif;
+    font-style: italic;
+    color: #e8c547;
+    text-shadow:
+      0 0 20px rgba(232, 197, 71, 0.4),
+      0 0 50px rgba(232, 197, 71, 0.15),
+      0 4px 12px rgba(0,0,0,0.8);
+  }
+</style>
+</head>
+<body>
+<div id="canvas"></div>
+
+<script>
+/**
+ * STACKED EMPHASIS TEMPLATE
+ *
+ * Key words stack vertically in the center at large scale.
+ * Supporting words are smaller, positioned around the key words.
+ * Visual hierarchy based on word importance/emphasis in the lyrics.
+ *
+ * The layout: imagine a vertical column of 1-3 large "key" words centered,
+ * with supporting words tucked in around them at 1/3 the size.
+ *
+ * Best for: indie, art pop, any genre where certain words carry heavy weight.
+ *
+ * Extended word properties:
+ *   word.importance: 0-1 (determines size tier: key, support, or emotional)
+ *   word.role: "key" | "support" | "emotional" (overrides auto-detection)
+ */
+
+var W = 1920;
+var H = 1080;
+var APPEAR_DURATION = 0.2;
+
+var elements = [];
+var currentLineIdx = -1;
+
+// Importance words that should be small
+var SUPPORT_WORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+  'of', 'is', 'are', 'was', 'were', 'it', 'my', 'your', 'i', 'we', 'he',
+  'she', 'they', 'so', 'if', 'no', 'not', 'just', 'with', 'that', 'this',
+  'from', 'by', 'up', 'out', 'be', 'do', 'can', 'will', 'all', 'like'
+]);
+
+// Emotional/feeling words that get serif treatment
+var EMOTIONAL_WORDS = new Set([
+  'love', 'heart', 'soul', 'pain', 'fire', 'light', 'dark', 'dream', 'lost',
+  'broken', 'beauty', 'forever', 'silence', 'truth', 'faith', 'hope', 'fear',
+  'cry', 'tears', 'blood', 'death', 'life', 'alone', 'free', 'breathe',
+  'burn', 'fall', 'fly', 'rise', 'shine', 'shadow', 'ghost', 'memory',
+  'heaven', 'hell', 'angel', 'demon', 'wild', 'infinite', 'eternity',
+  'desire', 'touch', 'kiss', 'whisper', 'scream', 'echo', 'flame'
+]);
+
+function classifyWord(word) {
+  if (word.role) { return word.role; }
+  var lower = word.text.toLowerCase().replace(/[^a-z]/g, '');
+  if (EMOTIONAL_WORDS.has(lower)) { return 'emotional'; }
+  if (SUPPORT_WORDS.has(lower)) { return 'support'; }
+  if (word.importance !== undefined) {
+    if (word.importance > 0.7) { return 'key'; }
+    if (word.importance < 0.3) { return 'support'; }
+  }
+  // Default: longer words are key, short are support
+  return lower.length >= 4 ? 'key' : 'support';
+}
+
+function buildLine(line, lineIdx) {
+  var canvas = document.getElementById('canvas');
+  elements.forEach(function(el) { el.remove(); });
+  elements = [];
+
+  var words = line.words || [];
+  if (words.length === 0) { return; }
+
+  // Classify all words
+  var classified = words.map(function(w) {
+    return { word: w, type: classifyWord(w) };
+  });
+
+  // Separate into key/emotional (stacked center) and support (peripheral)
+  var keyWords = classified.filter(function(c) { return c.type === 'key' || c.type === 'emotional'; });
+  var supportWords = classified.filter(function(c) { return c.type === 'support'; });
+
+  // If no key words, promote the longest word
+  if (keyWords.length === 0) {
+    var longest = classified.reduce(function(a, b) { return a.word.text.length > b.word.text.length ? a : b; });
+    longest.type = 'key';
+    keyWords = [longest];
+    supportWords = classified.filter(function(c) { return c !== longest; });
+  }
+
+  // Limit key words to max 3 for visual clarity
+  if (keyWords.length > 3) {
+    // Sort by text length descending, keep top 3
+    keyWords.sort(function(a, b) { return b.word.text.length - a.word.text.length; });
+    var demoted = keyWords.splice(3);
+    demoted.forEach(function(d) { d.type = 'support'; });
+    supportWords = supportWords.concat(demoted);
+  }
+
+  // Re-sort both arrays by original word order
+  var wordOrder = {};
+  words.forEach(function(w, i) { wordOrder[w.text + '_' + i] = i; });
+
+  // Layout: key words stacked vertically centered
+  var keyFontSize = keyWords.length === 1 ? 160 : keyWords.length === 2 ? 130 : 100;
+  var keyGap = keyFontSize * 0.15;
+  var totalKeyHeight = keyWords.length * keyFontSize + (keyWords.length - 1) * keyGap;
+  var keyStartY = (H - totalKeyHeight) / 2;
+
+  keyWords.forEach(function(item, i) {
+    var el = document.createElement('div');
+    var cssClass = item.type === 'emotional' ? 'emotional-word' : 'key-word';
+    el.className = 'stacked-word ' + cssClass;
+    el.textContent = item.type === 'key' ? item.word.text.toUpperCase() : item.word.text;
+    el.style.fontSize = keyFontSize + 'px';
+    el.style.left = (W / 2) + 'px';
+    el.style.top = (keyStartY + i * (keyFontSize + keyGap)) + 'px';
+    el.style.transform = 'translate(-50%, 0)';
+    el.dataset.startTime = String(item.word.startTime);
+    el.dataset.type = 'key';
+
+    canvas.appendChild(el);
+    elements.push(el);
+  });
+
+  // Layout: support words scattered around the key stack
+  var supportFontSize = Math.round(keyFontSize * 0.28);
+  var supportPositions = generateSupportPositions(supportWords.length, keyStartY, totalKeyHeight);
+
+  supportWords.forEach(function(item, i) {
+    var pos = supportPositions[i];
+    var el = document.createElement('div');
+    el.className = 'stacked-word support-word';
+    el.textContent = item.word.text;
+    el.style.fontSize = supportFontSize + 'px';
+    el.style.left = pos.x + 'px';
+    el.style.top = pos.y + 'px';
+    el.style.transform = 'translate(-50%, -50%)';
+    el.style.textAlign = pos.align;
+    el.dataset.startTime = String(item.word.startTime);
+    el.dataset.type = 'support';
+
+    canvas.appendChild(el);
+    elements.push(el);
+  });
+}
+
+function generateSupportPositions(count, keyTop, keyHeight) {
+  // Place support words in the margins around the center key stack
+  var positions = [];
+  var keyCenterY = keyTop + keyHeight / 2;
+  var zones = [
+    // Left side positions
+    { x: W * 0.18, y: keyCenterY - 80, align: 'right' },
+    { x: W * 0.15, y: keyCenterY + 60, align: 'right' },
+    { x: W * 0.22, y: keyCenterY - 180, align: 'right' },
+    { x: W * 0.20, y: keyCenterY + 160, align: 'right' },
+    // Right side positions
+    { x: W * 0.82, y: keyCenterY - 60, align: 'left' },
+    { x: W * 0.85, y: keyCenterY + 80, align: 'left' },
+    { x: W * 0.78, y: keyCenterY - 160, align: 'left' },
+    { x: W * 0.80, y: keyCenterY + 180, align: 'left' },
+    // Top/bottom
+    { x: W * 0.5, y: keyTop - 60, align: 'center' },
+    { x: W * 0.5, y: keyTop + keyHeight + 50, align: 'center' }
+  ];
+
+  for (var i = 0; i < count; i++) {
+    positions.push(zones[i % zones.length]);
+  }
+  return positions;
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+window.renderFrame = function(time) {
+  time = time || window.FRAME_TIME || 0;
+  var data = window.LYRICS_DATA;
+  if (!data || !data.lines) { return; }
+
+  // Find active line
+  var activeLineIdx = -1;
+  for (var i = 0; i < data.lines.length; i++) {
+    var line = data.lines[i];
+    if (time >= line.startTime && time < line.endTime) {
+      activeLineIdx = i;
+      break;
+    }
+  }
+
+  if (activeLineIdx === -1) {
+    if (currentLineIdx !== -1) {
+      elements.forEach(function(el) { el.remove(); });
+      elements = [];
+      currentLineIdx = -1;
+    }
+    return;
+  }
+
+  if (activeLineIdx !== currentLineIdx) {
+    currentLineIdx = activeLineIdx;
+    buildLine(data.lines[activeLineIdx], activeLineIdx);
+  }
+
+  var activeLine = data.lines[activeLineIdx];
+
+  elements.forEach(function(el) {
+    var wordStart = parseFloat(el.dataset.startTime);
+    var isKey = el.dataset.type === 'key';
+
+    if (time < wordStart) {
+      el.style.opacity = '0';
+      if (isKey) {
+        el.style.transform = 'translate(-50%, 0) scale(1.15)';
+      } else {
+        el.style.transform = 'translate(-50%, -50%) scale(0.7)';
+      }
+      return;
+    }
+
+    var elapsed = time - wordStart;
+    var progress = Math.min(1, elapsed / APPEAR_DURATION);
+    var eased = easeOutCubic(progress);
+
+    if (isKey) {
+      var scale = 1.15 - 0.15 * eased;
+      el.style.opacity = String(eased);
+      el.style.transform = 'translate(-50%, 0) scale(' + scale + ')';
+    } else {
+      var scale2 = 0.7 + 0.3 * eased;
+      el.style.opacity = String(eased * 0.6); // support words stay dimmer
+      el.style.transform = 'translate(-50%, -50%) scale(' + scale2 + ')';
+    }
+
+    // Fade out near line end
+    var fadeStart = activeLine.endTime - 0.3;
+    if (time > fadeStart) {
+      var fadeProgress = (time - fadeStart) / 0.3;
+      var currentOpacity = parseFloat(el.style.opacity);
+      el.style.opacity = String(Math.max(0, currentOpacity * (1 - fadeProgress)));
+    }
+  });
+};
+
+(function preview() {
+  if (window.FRAME_TIME !== undefined) {
+    window.renderFrame(window.FRAME_TIME);
+  }
+  requestAnimationFrame(preview);
+})();
+</script>
+</body>
+</html>

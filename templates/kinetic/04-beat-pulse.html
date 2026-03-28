@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Beat Pulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&family=Lora:ital,wght@0,600;1,500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #canvas {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+  }
+
+  #line-container {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    max-width: 1600px;
+  }
+
+  .beat-word {
+    display: inline-block;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 800;
+    color: #ffffff;
+    margin: 0 12px;
+    opacity: 0;
+    transform-origin: center center;
+    will-change: transform, opacity, text-shadow, filter;
+    text-shadow:
+      0 0 20px rgba(0,0,0,0.9),
+      0 0 60px rgba(0,0,0,0.6),
+      0 3px 8px rgba(0,0,0,0.8);
+  }
+
+  .beat-word.visible {
+    opacity: 1;
+  }
+
+  .beat-word.emphasis {
+    font-family: 'Lora', serif;
+    font-style: italic;
+    font-weight: 600;
+    color: #e8c547;
+  }
+
+  /* Glow ring behind text during beats */
+  .glow-ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(232, 197, 71, 0.15) 0%, transparent 70%);
+    opacity: 0;
+    pointer-events: none;
+    will-change: opacity, transform;
+  }
+</style>
+</head>
+<body>
+<div id="canvas">
+  <div class="glow-ring" id="glow-ring"></div>
+  <div id="line-container"></div>
+</div>
+
+<script>
+/**
+ * BEAT PULSE TEMPLATE
+ *
+ * Text scales up 5-10% on every beat hit with an intensifying glow.
+ * The "breathing" effect synced to music beats.
+ * Provide beat timestamps via LYRICS_DATA.beats = [0.5, 1.0, 1.5, ...]
+ *
+ * Best for: EDM, hip-hop, pop, anything with a strong rhythmic pulse.
+ *
+ * Extended data contract:
+ * window.LYRICS_DATA = {
+ *   lines: [...],  // standard
+ *   beats: [0.5, 1.0, 1.5, ...],  // beat timestamps in seconds
+ *   bpm: 120  // optional, used to auto-generate beats if beats[] not provided
+ * }
+ */
+
+var W = 1920;
+var H = 1080;
+var BEAT_SCALE = 1.08;        // scale factor on beat
+var BEAT_GLOW_INTENSITY = 1;  // max glow multiplier
+var BEAT_DECAY = 0.15;        // seconds for beat pulse to decay
+var WORD_APPEAR_DURATION = 0.12; // seconds for word to pop in
+
+var elements = [];
+var currentLineIdx = -1;
+var beatTimes = [];
+
+function generateBeatsFromBPM(bpm, duration) {
+  var interval = 60.0 / bpm;
+  var beats = [];
+  for (var t = 0; t < duration; t += interval) {
+    beats.push(t);
+  }
+  return beats;
+}
+
+function getBeatIntensity(time) {
+  // Find the most recent beat and compute decay
+  var maxIntensity = 0;
+  for (var i = 0; i < beatTimes.length; i++) {
+    var bt = beatTimes[i];
+    if (time >= bt && time < bt + BEAT_DECAY) {
+      var elapsed = time - bt;
+      var progress = elapsed / BEAT_DECAY;
+      // Sharp attack, exponential decay
+      var intensity = Math.pow(1 - progress, 2);
+      if (intensity > maxIntensity) {
+        maxIntensity = intensity;
+      }
+    }
+  }
+  return maxIntensity;
+}
+
+function buildLine(line) {
+  var container = document.getElementById('line-container');
+  elements.forEach(function(el) { el.remove(); });
+  elements = [];
+
+  var words = line.words || [];
+  var fontSize = words.length <= 4 ? 96 : words.length <= 7 ? 72 : 56;
+
+  words.forEach(function(word, i) {
+    var el = document.createElement('span');
+    var isEmphasis = word.role === 'accent' || word.emphasis > 0.7;
+    el.className = 'beat-word' + (isEmphasis ? ' emphasis' : '');
+    el.textContent = word.text;
+    el.style.fontSize = fontSize + 'px';
+    el.dataset.startTime = String(word.startTime);
+    el.dataset.baseSize = String(fontSize);
+    container.appendChild(el);
+    elements.push(el);
+  });
+}
+
+window.renderFrame = function(time) {
+  time = time || window.FRAME_TIME || 0;
+  var data = window.LYRICS_DATA;
+  if (!data || !data.lines) { return; }
+
+  // Initialize beats
+  if (beatTimes.length === 0) {
+    if (data.beats && data.beats.length > 0) {
+      beatTimes = data.beats;
+    } else if (data.bpm) {
+      var lastLine = data.lines[data.lines.length - 1];
+      beatTimes = generateBeatsFromBPM(data.bpm, lastLine.endTime + 2);
+    } else {
+      // Default: assume 120 BPM
+      var lastLine2 = data.lines[data.lines.length - 1];
+      beatTimes = generateBeatsFromBPM(120, lastLine2.endTime + 2);
+    }
+  }
+
+  // Find active line
+  var activeLineIdx = -1;
+  for (var i = 0; i < data.lines.length; i++) {
+    var line = data.lines[i];
+    if (time >= line.startTime && time < line.endTime) {
+      activeLineIdx = i;
+      break;
+    }
+  }
+
+  if (activeLineIdx === -1) {
+    if (currentLineIdx !== -1) {
+      elements.forEach(function(el) { el.remove(); });
+      elements = [];
+      currentLineIdx = -1;
+    }
+    // Still pulse the glow ring even between lines
+    var beatI = getBeatIntensity(time);
+    var glowRing = document.getElementById('glow-ring');
+    glowRing.style.opacity = String(beatI * 0.3);
+    glowRing.style.transform = 'translate(-50%, -50%) scale(' + (1 + beatI * 0.5) + ')';
+    return;
+  }
+
+  if (activeLineIdx !== currentLineIdx) {
+    currentLineIdx = activeLineIdx;
+    buildLine(data.lines[activeLineIdx]);
+  }
+
+  var beatIntensity = getBeatIntensity(time);
+  var activeLine = data.lines[activeLineIdx];
+
+  // Update glow ring
+  var glowRing = document.getElementById('glow-ring');
+  glowRing.style.opacity = String(beatIntensity * 0.5);
+  glowRing.style.transform = 'translate(-50%, -50%) scale(' + (1 + beatIntensity * 1.2) + ')';
+
+  elements.forEach(function(el) {
+    var wordStart = parseFloat(el.dataset.startTime);
+    var baseSize = parseFloat(el.dataset.baseSize);
+
+    if (time < wordStart) {
+      el.style.opacity = '0';
+      el.style.transform = 'scale(0.8)';
+      return;
+    }
+
+    // Pop-in animation
+    var appearProgress = Math.min(1, (time - wordStart) / WORD_APPEAR_DURATION);
+    var appearScale = 0.8 + 0.2 * easeOutBack(appearProgress);
+    var appearOpacity = Math.min(1, appearProgress * 2);
+
+    // Beat pulse on top of base scale
+    var scale = appearScale + (BEAT_SCALE - 1) * beatIntensity;
+
+    // Glow on beats
+    var glowAmount = beatIntensity * 20;
+    var isEmphasis = el.classList.contains('emphasis');
+
+    var baseShadow = '0 0 20px rgba(0,0,0,0.9), 0 0 60px rgba(0,0,0,0.6), 0 3px 8px rgba(0,0,0,0.8)';
+    var beatGlow = isEmphasis
+      ? ', 0 0 ' + glowAmount + 'px rgba(232, 197, 71, ' + (beatIntensity * 0.8) + ')'
+        + ', 0 0 ' + (glowAmount * 2) + 'px rgba(232, 197, 71, ' + (beatIntensity * 0.3) + ')'
+      : ', 0 0 ' + glowAmount + 'px rgba(255, 255, 255, ' + (beatIntensity * 0.5) + ')'
+        + ', 0 0 ' + (glowAmount * 2) + 'px rgba(255, 255, 255, ' + (beatIntensity * 0.15) + ')';
+
+    el.style.opacity = String(appearOpacity);
+    el.style.transform = 'scale(' + scale + ')';
+    el.style.textShadow = baseShadow + (beatIntensity > 0.05 ? beatGlow : '');
+
+    // Fade out near line end
+    var fadeStart = activeLine.endTime - 0.25;
+    if (time > fadeStart) {
+      var fadeProgress = (time - fadeStart) / 0.25;
+      el.style.opacity = String(Math.max(0, appearOpacity * (1 - fadeProgress)));
+    }
+  });
+};
+
+function easeOutBack(t) {
+  var c1 = 1.70158;
+  var c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+(function preview() {
+  if (window.FRAME_TIME !== undefined) {
+    window.renderFrame(window.FRAME_TIME);
+  }
+  requestAnimationFrame(preview);
+})();
+</script>
+</body>
+</html>

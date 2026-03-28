@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Typewriter Reveal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'JetBrains Mono', 'Courier Prime', monospace;
+  }
+
+  #canvas {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #text-container {
+    position: absolute;
+    bottom: 180px;
+    left: 120px;
+    right: 120px;
+    text-align: center;
+  }
+
+  .typed-line {
+    font-size: 64px;
+    font-weight: 500;
+    color: #ffffff;
+    line-height: 1.3;
+    letter-spacing: 0.02em;
+    text-shadow:
+      0 0 30px rgba(0,0,0,0.95),
+      0 0 80px rgba(0,0,0,0.7),
+      0 2px 4px rgba(0,0,0,0.9);
+    white-space: nowrap;
+    display: inline;
+  }
+
+  .typed-char {
+    display: inline;
+    opacity: 0;
+  }
+
+  .typed-char.visible {
+    opacity: 1;
+  }
+
+  .typed-char.just-typed {
+    color: #e8c547;
+    text-shadow:
+      0 0 15px rgba(232, 197, 71, 0.6),
+      0 0 30px rgba(232, 197, 71, 0.3),
+      0 0 60px rgba(0,0,0,0.8);
+  }
+
+  #cursor {
+    display: inline-block;
+    width: 3px;
+    height: 60px;
+    background: #e8c547;
+    vertical-align: middle;
+    margin-left: 4px;
+    box-shadow: 0 0 12px rgba(232, 197, 71, 0.6);
+  }
+
+  #cursor.blink {
+    animation: cursorBlink 0.6s ease-in-out infinite;
+  }
+
+  @keyframes cursorBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .prev-line {
+    font-size: 48px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.3);
+    line-height: 1.4;
+    text-align: center;
+    margin-bottom: 12px;
+    text-shadow:
+      0 0 20px rgba(0,0,0,0.8),
+      0 2px 4px rgba(0,0,0,0.6);
+  }
+
+  #prev-lines {
+    position: absolute;
+    bottom: 270px;
+    left: 120px;
+    right: 120px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="canvas">
+  <div id="prev-lines"></div>
+  <div id="text-container">
+    <span class="typed-line" id="typed-line"></span>
+    <span id="cursor" class="blink"></span>
+  </div>
+</div>
+
+<script>
+/**
+ * TYPEWRITER REVEAL TEMPLATE
+ *
+ * Characters appear one by one synced to word timestamps.
+ * Characters within a word are evenly distributed across the word's duration.
+ * Cursor blinks during pauses, stops blinking while typing.
+ *
+ * Best for: acoustic, ballad, slower tempo songs.
+ */
+
+const CHAR_HIGHLIGHT_DURATION = 0.15;
+const MAX_PREV_LINES = 2;
+
+let currentLineIdx = -1;
+let charElements = [];
+let prevLinesShown = [];
+
+function buildLine(line) {
+  const typedLine = document.getElementById('typed-line');
+  const prevContainer = document.getElementById('prev-lines');
+
+  // Move current line to prev-lines (safe DOM construction)
+  if (typedLine.textContent.trim()) {
+    prevLinesShown.push(typedLine.textContent);
+    if (prevLinesShown.length > MAX_PREV_LINES) {
+      prevLinesShown.shift();
+    }
+    // Build prev lines with safe DOM methods
+    while (prevContainer.firstChild) {
+      prevContainer.removeChild(prevContainer.firstChild);
+    }
+    prevLinesShown.forEach(function(text) {
+      var div = document.createElement('div');
+      div.className = 'prev-line';
+      div.textContent = text;
+      prevContainer.appendChild(div);
+    });
+  }
+
+  // Clear typed line safely
+  while (typedLine.firstChild) {
+    typedLine.removeChild(typedLine.firstChild);
+  }
+  charElements = [];
+
+  // Build character-level timing from word timestamps
+  var words = line.words || [];
+  var charIndex = 0;
+
+  words.forEach(function(word, wordIdx) {
+    var wordDuration = word.endTime - word.startTime;
+    var chars = word.text.split('');
+    var charDuration = chars.length > 0 ? wordDuration / chars.length : wordDuration;
+
+    chars.forEach(function(ch, ci) {
+      var span = document.createElement('span');
+      span.className = 'typed-char';
+      span.textContent = ch;
+      span.dataset.revealTime = String(word.startTime + ci * charDuration);
+      typedLine.appendChild(span);
+      charElements.push(span);
+      charIndex++;
+    });
+
+    // Add space after word (except last)
+    if (wordIdx < words.length - 1) {
+      var space = document.createElement('span');
+      space.className = 'typed-char';
+      space.textContent = '\u00A0';
+      space.dataset.revealTime = String(word.endTime);
+      typedLine.appendChild(space);
+      charElements.push(space);
+      charIndex++;
+    }
+  });
+}
+
+function clearAll() {
+  var typedLine = document.getElementById('typed-line');
+  var prevContainer = document.getElementById('prev-lines');
+  while (typedLine.firstChild) { typedLine.removeChild(typedLine.firstChild); }
+  while (prevContainer.firstChild) { prevContainer.removeChild(prevContainer.firstChild); }
+  charElements = [];
+  prevLinesShown = [];
+  currentLineIdx = -1;
+}
+
+window.renderFrame = function(time) {
+  time = time || window.FRAME_TIME || 0;
+  var data = window.LYRICS_DATA;
+  if (!data || !data.lines) { return; }
+
+  // Find active line
+  var activeLineIdx = -1;
+  for (var i = 0; i < data.lines.length; i++) {
+    var line = data.lines[i];
+    if (time >= line.startTime && time < line.endTime) {
+      activeLineIdx = i;
+      break;
+    }
+  }
+
+  var cursor = document.getElementById('cursor');
+
+  if (activeLineIdx === -1) {
+    cursor.classList.add('blink');
+    if (currentLineIdx >= 0) {
+      var lastLine = data.lines[currentLineIdx];
+      if (time > lastLine.endTime + 0.5) {
+        charElements.forEach(function(el) {
+          el.style.opacity = '0.3';
+          el.style.color = 'rgba(255, 255, 255, 0.3)';
+          el.style.textShadow = 'none';
+        });
+      }
+    }
+    return;
+  }
+
+  if (activeLineIdx !== currentLineIdx) {
+    currentLineIdx = activeLineIdx;
+    buildLine(data.lines[activeLineIdx]);
+  }
+
+  var isTyping = false;
+
+  charElements.forEach(function(el) {
+    var revealTime = parseFloat(el.dataset.revealTime);
+
+    if (time >= revealTime) {
+      el.classList.add('visible');
+      el.style.opacity = '1';
+
+      var elapsed = time - revealTime;
+      if (elapsed < CHAR_HIGHLIGHT_DURATION) {
+        el.classList.add('just-typed');
+        isTyping = true;
+      } else {
+        el.classList.remove('just-typed');
+        el.style.color = '#ffffff';
+        el.style.textShadow = '0 0 30px rgba(0,0,0,0.95), 0 0 80px rgba(0,0,0,0.7), 0 2px 4px rgba(0,0,0,0.9)';
+      }
+    } else {
+      el.classList.remove('visible');
+      el.style.opacity = '0';
+    }
+  });
+
+  if (isTyping) {
+    cursor.classList.remove('blink');
+    cursor.style.opacity = '1';
+  } else {
+    cursor.classList.add('blink');
+  }
+
+  var visibleChars = charElements.filter(function(el) { return el.classList.contains('visible'); });
+  if (visibleChars.length > 0) {
+    cursor.style.display = 'inline-block';
+  }
+
+  var activeLine = data.lines[activeLineIdx];
+  var fadeStart = activeLine.endTime - 0.3;
+  if (time > fadeStart) {
+    var fadeProgress = (time - fadeStart) / 0.3;
+    var opacity = Math.max(0, 1 - fadeProgress);
+    charElements.forEach(function(el) {
+      if (el.classList.contains('visible')) {
+        el.style.opacity = String(opacity);
+      }
+    });
+    cursor.style.opacity = String(opacity);
+  }
+};
+
+(function preview() {
+  if (window.FRAME_TIME !== undefined) {
+    window.renderFrame(window.FRAME_TIME);
+  }
+  requestAnimationFrame(preview);
+})();
+</script>
+</body>
+</html>
