@@ -18,6 +18,7 @@ description: >
 user-invocable: true
 model: claude-opus-4-6
 status: active
+metadata: {"openclaw": {"requires": {"env": ["FAL_KEY"], "bins": ["ffmpeg", "ffprobe", "python3"], "anyBins": ["npx"]}, "primaryEnv": "FAL_KEY", "emoji": "🎬"}}
 ---
 
 # Music Video
@@ -26,870 +27,252 @@ Produce cinematic AI music videos from an audio file and lyrics. Beat-synced vis
 
 ## Critical Rules
 
-1. **Beat-sync is non-negotiable** — every scene cut MUST land on a detected beat. Never place cuts between beats. The audio intelligence phase must complete before any visual work begins.
-2. **Motion-only prompts for i2v** — when generating video from storyboard images, describe ONLY motion and camera movement (15-40 words). The character and scene already exist in the image. Redescribing appearance causes the model to reinterpret and drift.
-3. **Never fabricate lyrics** — use only the user-provided lyrics text. If Whisper disagrees with the user's lyrics, trust the user's text for words and Whisper for timing.
-4. **QA every video clip before assembly** — no clip enters the final timeline without passing the QA check. A bad clip ruins the entire video.
-5. **Present cost estimate before spending money** — show the user total estimated cost (images + video clips) and get confirmation before calling any fal.ai generation endpoints.
+1. **Beat-sync is non-negotiable** — every scene cut lands on a detected beat. The audio intelligence phase completes before any visual work begins.
+2. **Motion-only prompts for i2v** — describe ONLY motion and camera (15-40 words). The character and scene exist in the image. Redescribing appearance causes drift.
+3. **Never fabricate lyrics** — user's text for words, Whisper for timing.
+4. **QA every clip before assembly** — no clip enters the timeline without passing QA.
+5. **Present cost estimate before spending money** — get user confirmation before calling fal.ai generation endpoints.
 
 ## Prerequisites
 
-Check before starting. Stop and tell the user what's missing.
-
 ```bash
-# Required
-which ffmpeg          # video assembly
-which ffprobe         # media inspection
-which python3         # scripts
-python3 -c "import whisper"     # transcription (pip install openai-whisper)
-echo $FAL_KEY                    # fal.ai API key
-
-# Required Python packages
-python3 -c "import librosa"     # beat detection (pip install librosa)
-python3 -c "import demucs"      # stem separation (pip install demucs)
-
-# Optional (for QA)
-python3 -c "import deepface"    # face consistency (pip install deepface)
-
-# Optional (for kinetic typography mode)
-which npx && npx puppeteer --version  # frame rendering
+which ffmpeg && which ffprobe && which python3
+python3 -c "import whisper"    # pip install openai-whisper
+python3 -c "import librosa"    # pip install librosa
+python3 -c "import demucs"     # pip install demucs
+echo $FAL_KEY                   # fal.ai API key
+# Optional: pip install deepface (QA), npm install -g puppeteer (kinetic mode)
 ```
 
 ## Inputs
 
-Collect from the user before starting:
-
 | Input | Required | Description |
 |-------|----------|-------------|
-| Audio file | Yes | Path to MP3, WAV, or FLAC |
-| Lyrics | Yes | Full lyrics text (pasted or file path) |
-| Mode | Yes | Ask: "Karaoke (word-by-word highlight) or Music Video (kinetic typography)?" |
-| Genre | Yes | Ask: "What genre? (pop, hip-hop, rock, EDM, R&B, indie, country, other)" |
-| Video model | No | Default: Kling 3.0 Standard. Options: Kling 3.0 Pro, Kling 3.0 Standard, Kling 2.6 Pro |
-| Character ref | No | 1-4 photos of the character/artist (frontal required, side/profile optional). Enables element binding in Kling 3.0. |
-| Concept | No | Creative direction hint (e.g., "neo-noir cyberpunk cityscape") |
-| Auto mode | No | Ask: "Auto-generate everything, or pause for storyboard approval?" Default: pause. |
+| Audio file | Yes | MP3, WAV, or FLAC |
+| Lyrics | Yes | Full lyrics (pasted or file path) |
+| Mode | Yes | Karaoke (word-by-word highlight) or Music Video (kinetic typography) |
+| Genre | Yes | pop, hip-hop, rock, EDM, R&B, indie, country |
+| Video model | No | Kling 3.0 Pro / Standard (default) / 2.6 Pro |
+| Character ref | No | 1-4 photos (frontal required). Enables element binding in Kling 3.0. |
+| Concept | No | Creative direction hint |
+| Auto mode | No | Skip approval pauses. Default: pause for review. |
 
-**Frame rate by genre (automatic, user can override):**
-
-| Genre | FPS | Rationale |
-|-------|-----|-----------|
-| Pop | 30 | Clean, modern, broadcast feel |
-| EDM | 30 | Smooth for fast visual motion |
-| Hip-hop | 24 | Cinematic, filmic texture |
-| Rock | 24 | Gritty, cinematic |
-| R&B | 24 | Warm, intimate, filmic |
-| Indie | 24 | Contemplative, cinema-quality |
-| Country | 24 | Golden hour, cinematic landscape |
+**FPS by genre:** Pop/EDM = 30fps. Hip-hop/Rock/R&B/Indie/Country = 24fps (cinematic).
 
 ---
 
 ## Phase 1: Audio Intelligence
 
-This phase extracts everything we need from the audio before any visual work begins. All subsequent phases depend on this output.
+All later phases depend on this. Run it first, entirely local, no cost.
 
-### Step 1.1: Validate Audio
+**Step 1.1:** Validate audio with `ffprobe`. Extract duration. Reject if not MP3/WAV/FLAC.
 
+**Step 1.2:** Stem separation — isolate vocals and instrumental for better analysis:
 ```bash
-ffprobe -v quiet -print_format json -show_format -show_streams "<audio-file>"
+python3 {baseDir}/scripts/audio-intelligence.py --audio <file> --output-dir <dir>
 ```
+This runs demucs (htdemucs, two-stems), then librosa for beats/onsets/energy/structure. If demucs unavailable, uses original audio. Falls back gracefully.
 
-Extract: duration, format, sample rate. Reject if not MP3/WAV/FLAC.
-
-### Step 1.2: Stem Separation (demucs)
-
-Separate the audio into stems for better analysis:
-
+**Step 1.3:** Transcribe with Whisper large-v3 (falls back to medium → base):
 ```bash
-python3 -m demucs --two-stems vocals -n htdemucs "<audio-file>" -o "<output-dir>/stems"
+bash {baseDir}/scripts/transcribe.sh <audio-file> <output-dir> [--vocals-stem <stems/vocals.wav>]
 ```
 
-This produces `vocals.wav` and `no_vocals.wav`. The isolated vocals improve Whisper accuracy. The instrumental improves beat detection accuracy.
-
-If demucs fails (not enough RAM, etc.) → skip and use the original audio for both transcription and beat detection. Log warning but continue.
-
-### Step 1.3: Transcribe with Whisper
-
+**Step 1.4:** Align user lyrics with Whisper timing:
 ```bash
-python3 -c "
-import whisper, json
-model = whisper.load_model('large-v3')
-result = model.transcribe('<vocals-stem-or-original>', word_timestamps=True)
-with open('<output-dir>/whisper-raw.json', 'w') as f:
-    json.dump(result, f, indent=2)
-"
+python3 {baseDir}/scripts/align-lyrics.py --whisper <dir>/whisper-raw.json --lyrics <file> --output <dir>/aligned-lyrics.json
 ```
 
-If `large-v3` fails (OOM) → fall back to `medium`, then `base`. Log which model was used.
+If >30% "interpolated" matches → warn user lyrics may not match audio.
 
-### Step 1.4: Align Lyrics
-
-Cross-reference Whisper timing with user-provided lyrics for word accuracy:
-
-```bash
-python3 scripts/align-lyrics.py \
-  --whisper "<output-dir>/whisper-raw.json" \
-  --lyrics "<lyrics-file>" \
-  --output "<output-dir>/aligned-lyrics.json"
-```
-
-Output: `{"words": [{word, start, end, line_index, is_line_break, confidence, match_type}, ...], "lines": [{text, start, end, words: [...]}, ...], "metadata": {...}}`
-
-If alignment has many "interpolated" matches (>30%) → warn user that lyrics may not match audio well. Ask them to verify.
-
-### Step 1.5: Beat Detection
-
-Run on the instrumental stem (no_vocals.wav) for cleaner beat detection:
-
-```python
-import librosa, json
-
-y, sr = librosa.load("<output-dir>/stems/no_vocals.wav")
-
-# Beats
-tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
-
-# Onsets (sub-beat hits — snares, kicks, hats)
-onset_frames = librosa.onset.onset_detect(y=y, sr=sr)
-onset_times = librosa.frames_to_time(onset_frames, sr=sr).tolist()
-
-# Energy curve (RMS, normalized 0-1)
-rms = librosa.feature.rms(y=y)[0]
-rms_times = librosa.frames_to_time(range(len(rms)), sr=sr).tolist()
-rms_norm = (rms / rms.max()).tolist()
-
-output = {
-    "bpm": float(tempo),
-    "beats": [round(b, 3) for b in beat_times],
-    "onsets": [round(o, 3) for o in onset_times],
-    "energy": [{"time": round(t, 3), "value": round(v, 4)} for t, v in zip(rms_times, rms_norm)],
-}
-
-with open("<output-dir>/beat-map.json", "w") as f:
-    json.dump(output, f, indent=2)
-```
-
-If demucs was skipped, run beat detection on the original audio instead.
-
-### Step 1.6: Song Structure Detection
-
-Use librosa's structural segmentation to detect verse/chorus/bridge boundaries:
-
-```python
-import librosa
-import numpy as np
-
-y, sr = librosa.load("<audio-file>")
-
-# Compute chroma features
-chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-
-# Recurrence matrix for self-similarity
-R = librosa.segment.recurrence_matrix(chroma, mode="affinity", sym=True)
-
-# Laplacian segmentation
-bound_frames = librosa.segment.agglomerative(chroma, k=8)
-bound_times = librosa.frames_to_time(bound_frames, sr=sr).tolist()
-```
-
-Combine with the aligned lyrics line breaks and beat map to produce:
-
-```json
-// <output-dir>/song-structure.json
-{
-  "sections": [
-    {"start": 0.0, "end": 15.2, "label": "intro", "energy_avg": 0.3},
-    {"start": 15.2, "end": 45.8, "label": "verse", "energy_avg": 0.5},
-    {"start": 45.8, "end": 75.1, "label": "chorus", "energy_avg": 0.85},
-    ...
-  ]
-}
-```
-
-Label assignment heuristic:
-- First section with no/few lyrics → "intro"
-- Sections with moderate energy → "verse"
-- Sections with high energy that repeat → "chorus"
-- Sections that appear once with contrasting energy → "bridge"
-- Last section with falling energy → "outro"
-
-This is approximate. If the user provides section labels, trust those instead.
-
-### Phase 1 Output Files
-
-| File | Content |
-|------|---------|
-| `aligned-lyrics.json` | Word-level timestamps + line structure |
-| `beat-map.json` | BPM, beat times, onset times, energy curve |
-| `song-structure.json` | Section boundaries with labels + energy |
-| `stems/vocals.wav` | Isolated vocals (if demucs ran) |
-| `stems/no_vocals.wav` | Instrumental (if demucs ran) |
+**Output files:** `aligned-lyrics.json`, `beat-map.json`, `song-structure.json`, `stems/`
 
 ---
 
 ## Phase 2: Creative Direction
 
-### Step 2.1: Analyze Lyrics
+Read `{baseDir}/references/creative-direction.md` for genre tables, composition rules, visual metaphors, and color arcs.
 
-Using the aligned lyrics and song structure, extract:
+**Step 2.1: Analyze lyrics** — extract themes, narrative arc, key imagery, emotional progression, quotable lines for TikTok clips.
 
-- **Themes**: 3-5 core themes
-- **Narrative arc**: How the story/emotion progresses
-- **Key imagery**: Concrete visual elements mentioned in lyrics
-- **Emotional progression**: Map each section to an emotional state
-- **Quotable lines**: Lines that would make great TikTok clips (high-impact, standalone)
+**Step 2.2: Design the visual through-line** — fill ALL five before writing any scenes:
 
-### Step 2.2: Genre Visual Language
+1. **Visual motif** — one recurring symbol that transforms across the arc (appears in 4+ scenes)
+2. **Narrative through-line** — a simple A→B feeling transformation ("trapped → free")
+3. **Color temperature arc** — how palette shifts per section (cool verse → warm chorus → contrasting bridge)
+4. **Bridge departure** — what makes the bridge visually different (new location, color, perspective)
+5. **Visual bookend** — final scene rhymes with first scene, but transformed
 
-Apply genre-specific visual conventions:
+**Step 2.3: Generate storyboard** — plan scenes beat-snapped to `beat-map.json`.
 
-| Genre | Palette | Lighting | Locations | Camera Style |
-|-------|---------|----------|-----------|-------------|
-| **Pop** | Bright, saturated, clean | Even, polished | Fashion-forward, varied | Steady, smooth tracking |
-| **Hip-hop** | High-contrast, neon accents | Hard shadows, rim light | Urban, nightlife, studio | Low angles, slow-mo |
-| **Rock** | Desaturated, earthy | Harsh, practical | Warehouses, stages, outdoors | Handheld feel, fast cuts |
-| **EDM** | Neon, hyper-saturated | Strobes, colored gels | Clubs, festivals, abstract | Dynamic, zooms, glitch |
-| **R&B** | Warm amber, rich tones | Soft backlight, warm | Intimate interiors, golden hour | Shallow DOF, close-ups |
-| **Indie** | Muted, faded, vintage | Natural, overcast | Nature, small towns, bedrooms | Static, contemplative |
-| **Country** | Golden, warm earth | Golden hour, natural | Open fields, porches, roads | Wide establishing shots |
+- Minimum clip duration: 5 seconds (Kling constraint)
+- Scene density: Intro/Outro 1-2 scenes, Verse 2-4, Chorus 2-4, Bridge 1-2
+- For chorus energy: use faster camera movement WITHIN clips, not faster cuts between clips
+- Rotate shot scale: wide → medium → close-up → wide (avoid monotony)
+- Include composition, lens, and camera system tokens in every prompt (see reference)
 
-### Step 2.3: Design Visual Through-Line
-
-Before generating individual scenes, design the video's creative spine. This is what separates a music video from a slideshow.
-
-**Required creative decisions (fill ALL before writing any scenes):**
-
-1. **Visual motif** — one recurring image, object, or symbol that appears across the arc and transforms in meaning. Examples: a burning candle (hope → loss → renewal), a red thread (connection → breaking → tying back), a mirror (self-reflection → fracture → acceptance). The motif should appear in at least 4 scenes and visually change by the final chorus.
-
-2. **Narrative through-line** — a simple A→B transformation. Not plot — feeling. "Trapped → free." "Numb → alive." "Together → apart." Every scene either advances or contrasts with this arc.
-
-3. **Color temperature arc** — how the palette shifts across the song. Example: cool blues in verse 1 (isolation) → warm amber in chorus (connection) → desaturated bridge (doubt) → golden final chorus (resolution). This must be specific to each section, not one static palette.
-
-4. **The bridge departure** — the bridge is ALWAYS a visual departure. Plan specifically: new location? New color? New camera style? New visual metaphor? The bridge must feel like stepping into a different world.
-
-5. **Visual bookend** — the final scene should visually rhyme with the first scene, but transformed. If the video opens with the character alone in an empty room, it should close with the character in that room, but now the room means something different (lit differently, furnished, or the character is leaving it).
-
-### Step 2.4: Generate Storyboard (Beat-Snapped)
-
-For each section in `song-structure.json`, plan scenes. Scene boundaries MUST land on beats from `beat-map.json`.
-
-**IMPORTANT: Minimum clip duration is 5 seconds** (Kling constraint). Do not plan scenes shorter than 5 seconds. For faster cutting in choruses, generate 10-second clips and plan to cut them in assembly, or accept 5-second minimum scenes.
-
-**Scene density by section type:**
-- Intro/outro: 1-2 scenes (8-16 beats each, minimum 5s)
-- Verse: 2-4 scenes (4-8 beats each, minimum 5s, narrative focus)
-- Chorus: 2-4 scenes (minimum 5s each — use faster camera movement WITHIN clips to create energy, not faster cuts between clips)
-- Bridge: 1-2 scenes (visual departure — different location, palette, or perspective)
-
-**Shot composition rules** — include in every SEEDREAM prompt:
-- Specify composition: "rule of thirds," "centered symmetrical," "foreground framing element," "leading lines," or "negative space on left"
-- Specify lens: "35mm wide angle" (environmental), "85mm portrait lens" (intimate), "anamorphic widescreen" (cinematic)
-- Specify camera system for cinematic texture: "shot on ARRI ALEXA, Kodak Vision3 250D film stock" or "Fuji XT5, natural color science"
-- Reference the visual motif when it appears in the scene
-
-**Shot variety cycle** — rotate through these to avoid monotony:
+Scene format:
 ```
-Wide establishing → Medium subject → Close-up detail →
-Wide environment → Medium action → Close-up emotion →
-(repeat with variation, intensifying toward chorus peaks)
+### Scene {N}: {start} - {end}
+Section: | Lyrics: | Mood: | Visual motif: | Visual: | Motion prompt: | Camera: | Transition:
 ```
 
-For each scene, produce:
-
-```markdown
-### Scene {N}: {start_time} - {end_time}
-**Section**: {verse/chorus/bridge/intro/outro}
-**Lyrics**: "{lyrics for this section}"
-**Mood**: {emotional quality — must connect to the narrative through-line}
-**Visual motif**: {how the recurring motif appears in this scene, or "not present"}
-**Visual**: {detailed SEEDREAM prompt — subject + action + setting + composition + lens + style + lighting + camera + color temperature}
-**Motion prompt**: {15-40 word Kling prompt — motion and camera ONLY}
-**Camera**: {shot type + angle + lens}
-**Transition to next**: {cut type + creative rationale}
-```
-
-Save to `<output-dir>/creative-brief.md`.
-
-### Step 2.4: Storyboard Approval
-
-If NOT in auto mode:
-1. Present the creative brief to the user
-2. Show total scene count and cost estimate
-3. Ask for approval or changes
-4. Iterate until approved
-
-If in auto mode: skip approval, proceed.
-
-**Cost estimate formula:**
-
-```
-image_cost = num_scenes * $0.04 (SEEDREAM)
-video_cost = num_scenes * clip_duration_avg * model_cost_per_sec
-total = image_cost + video_cost
-```
-
-| Model | Cost/sec |
-|-------|----------|
-| Kling 3.0 Pro | $0.112 |
-| Kling 3.0 Standard | $0.084 |
-| Kling 2.6 Pro | $0.07 |
+**Step 2.4: Cost estimate + approval** — calculate cost, present to user, get confirmation.
 
 ---
 
 ## Phase 3: Storyboard Image Generation
 
-### Step 3.1: Upload Character Reference (if provided)
+Read `{baseDir}/references/fal-api-patterns.md` for exact API calls.
 
-```python
-import fal_client
+**Step 3.1:** Upload character reference images to fal.ai CDN (if provided).
 
-# Upload each reference image to fal.ai CDN
-frontal_url = fal_client.upload_file("character-front.png")
-side_urls = [fal_client.upload_file(f) for f in ["char-3quarter.png", "char-profile.png"]]
-```
+**Step 3.2:** Generate all storyboard frames with SEEDREAM v4.5 ($0.04/image).
+- Same seed across all scenes for style consistency
+- Same style prefix prepended to every prompt
+- Identical character descriptions when character appears
 
-### Step 3.2: Generate Scene Images
+**Step 3.3:** Optional upscaling (SeedVR2 or CCSR) before video generation.
 
-For each scene in the creative brief, generate with SEEDREAM v4.5:
+**Step 3.4: Storyboard face QA** — if character reference provided, run DeepFace ArcFace comparison on EVERY storyboard image BEFORE video generation. Threshold: 0.45 similarity. Regenerate mismatches up to 3x with different seeds. This prevents paying for Kling video on frames with the wrong character. Read `{baseDir}/references/qa-pipeline.md` for details.
 
-```python
-result = fal_client.subscribe(
-    "fal-ai/bytedance/seedream/v4.5/text-to-image",
-    arguments={
-        "prompt": scene["visual_prompt"],
-        "negative_prompt": "blurry, low quality, distorted, watermark, text, logo, extra fingers, deformed hands, multiple people, cloned faces, plastic skin, overexposed, underexposed, jpeg artifacts, oversharpened, oversaturated, symmetry errors, 3D render, cartoon, anime",
-        "image_size": "landscape_16_9",
-        "num_images": 1,
-        "seed": CONSISTENT_SEED,
-    },
-)
-```
-
-**Consistency strategy:**
-- Use the same `seed` for all scenes
-- Prepend every prompt with the same style prefix: `"cinematic film still, {genre_style_tokens}, {color_palette_description}, 8K, ultra detailed, "`
-- If a character appears, use identical character descriptions across all prompts
-- Keep lighting descriptors consistent within song sections
-
-Save images to `<output-dir>/storyboard/scene-{NN}.png`.
-
-### Step 3.3: Optional Upscaling
-
-If user requests upscaling before video generation:
-
-```python
-# SeedVR2 — $0.001/megapixel, best for AI art
-result = fal_client.subscribe(
-    "fal-ai/seedvr/upscale/image",
-    arguments={
-        "image_url": scene_image_url,
-        "scale_factor": 2,  # 1920x1080 → 3840x2160
-    },
-)
-
-# CCSR — FREE alternative
-result = fal_client.subscribe(
-    "fal-ai/ccsr",
-    arguments={
-        "image_url": scene_image_url,
-        "scale": 2,
-    },
-)
-```
-
-### Step 3.4: Storyboard Face QA (if character reference provided)
-
-**CRITICAL: Run this BEFORE video generation to avoid wasting money on clips with the wrong character.**
-
-For every storyboard image that should contain the character, run DeepFace face comparison against the reference:
-
-```python
-from deepface import DeepFace
-
-for scene_image in storyboard_images:
-    try:
-        result = DeepFace.verify(
-            img1_path=scene_image,
-            img2_path=character_reference_frontal,
-            model_name="ArcFace",
-            distance_metric="cosine",
-            enforce_detection=False,
-        )
-        similarity = 1.0 - result["distance"]
-        if similarity < 0.45:
-            # Character mismatch — regenerate this scene
-            # Try up to 3 times with different seeds
-            regenerate_scene(scene, new_seed=True)
-    except:
-        pass  # No face detected — may be a wide shot, skip check
-```
-
-Threshold: 0.45 for storyboard images (slightly lower than video QA since static images may have more stylistic variation).
-
-If a scene fails face QA after 3 regeneration attempts, flag it for the user: "Scene {N} could not match the character reference. This may be because the character is too small in the frame, or the angle is too extreme. Use anyway?"
-
-If DeepFace is not installed, skip this step but warn: "Face consistency check skipped — character may vary between scenes."
-
-### Step 3.5: Storyboard Review
-
-If NOT in auto mode, generate `storyboard-review.html` using the template at `templates/storyboard.html`. Open for user to approve/reject each scene. Regenerate rejected scenes with adjusted prompts.
+**Step 3.5:** If not auto mode, generate `storyboard-review.html` for user approval.
 
 ---
 
 ## Phase 4: Video Generation
 
-### Step 4.1: Generate Video Clips
+Read `{baseDir}/references/fal-api-patterns.md` for exact API calls per model.
 
-For each approved storyboard frame, generate a video clip.
+**Model selection:**
+- Kling 3.0 Pro ($0.112/s) — best quality, element binding
+- Kling 3.0 Standard ($0.084/s) — good quality, element binding
+- Kling 2.6 Pro ($0.07/s) — budget, NO element binding
 
-**If Kling 3.0 (Pro or Standard) AND character reference provided:**
+**If Kling 3.0 + character reference:** use `elements` parameter with frontal + side reference images. Reference as `@Element1` in prompt. This reduces face drift from ~50% to <10%.
 
-```python
-result = fal_client.subscribe(
-    "fal-ai/kling-video/v3/pro/image-to-video",  # or v3/standard
-    arguments={
-        "prompt": scene["motion_prompt"],  # motion + camera ONLY
-        "start_image_url": scene_image_url,
-        "elements": [{
-            "frontal_image_url": frontal_url,
-            "reference_image_urls": side_urls,
-        }],
-        "duration": str(scene["duration_sec"]),
-        "negative_prompt": "face morphing, identity change, deformed face, flickering, blurry",
-        "cfg_scale": 0.5,
-    },
-)
-```
+**If Kling 2.6 or no character ref:** standard i2v, consistency relies on storyboard image quality only.
 
-Reference the character in the prompt as `@Element1`:
-```
-"@Element1 walks forward confidently, slow dolly push-in, warm cinematic lighting"
-```
+**Submit all scenes in parallel** via `fal_client.submit()`. Collect results as they complete.
 
-**If Kling 3.0 WITHOUT character reference:**
-
-Same call but omit the `elements` parameter.
-
-**If Kling 2.6:**
-
-```python
-result = fal_client.subscribe(
-    "fal-ai/kling-video/v2.6/pro/image-to-video",
-    arguments={
-        "prompt": scene["motion_prompt"],
-        "image_url": scene_image_url,
-        "duration": "5",  # or "10"
-        "aspect_ratio": "16:9",
-    },
-)
-```
-
-Note: Kling 2.6 does NOT support element binding. Character consistency relies entirely on the storyboard image quality.
-
-**Submit all scenes in parallel** using `fal_client.submit()`, then collect results:
-
-```python
-handles = []
-for scene in scenes:
-    handle = fal_client.submit(endpoint, arguments=scene_args)
-    handles.append((scene, handle))
-
-for scene, handle in handles:
-    result = handle.get()
-    download_clip(result["video"]["url"], f"<output-dir>/clips/scene-{scene['number']:02d}.mp4")
-```
-
-### Step 4.2: Verify Each Clip
-
-```bash
-ffprobe -v quiet -print_format json -show_format -show_streams "<clip>"
-```
-
-Check: has video stream, correct aspect ratio, duration within expected range.
+**Verify each clip** with `ffprobe` — correct aspect ratio, duration, has video stream.
 
 ---
 
 ## Phase 5: QA Layer
 
-Run QA on every generated video clip. Clips that fail are regenerated.
+Read `{baseDir}/references/qa-pipeline.md` for thresholds and code.
 
-### Step 5.1: Face Consistency Check (if character reference provided)
+Run on every video clip before assembly:
 
-```python
-from deepface import DeepFace
-import cv2
+1. **Face consistency** (if character ref) — DeepFace ArcFace at 2fps, threshold 0.50
+2. **Temporal consistency** — SSIM between consecutive frames, threshold 0.65
+3. **Color consistency** — LAB histogram correlation across all clips, threshold 0.7
 
-def check_face_consistency(clip_path, reference_face_path, threshold=0.50):
-    """Extract frames, compare faces to reference. Return pass/fail + scores."""
-    cap = cv2.VideoCapture(clip_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_interval = max(1, int(fps / 2))  # check ~2 frames per second
-
-    scores = []
-    frame_idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_idx % frame_interval == 0:
-            try:
-                result = DeepFace.verify(
-                    frame, reference_face_path,
-                    model_name="ArcFace",
-                    distance_metric="cosine",
-                    enforce_detection=False,
-                )
-                scores.append(1.0 - result["distance"])  # convert distance to similarity
-            except:
-                pass  # face not detected in this frame
-        frame_idx += 1
-    cap.release()
-
-    if not scores:
-        return {"passed": True, "reason": "no_faces_detected", "scores": []}
-
-    min_score = min(scores)
-    mean_score = sum(scores) / len(scores)
-    return {
-        "passed": min_score >= threshold,
-        "min_similarity": min_score,
-        "mean_similarity": mean_score,
-        "frames_checked": len(scores),
-    }
+```bash
+python3 {baseDir}/scripts/qa-check.py --clips-dir ./clips/ --reference-face ref.png --output qa-results.json
 ```
 
-If DeepFace is not installed → skip this check, log warning.
-
-### Step 5.2: Visual Artifact Check (Gemini 2.5 Flash)
-
-For clips that have characters or complex scenes, send 3-5 evenly spaced frames to Gemini for artifact detection:
-
-```
-Analyze these AI-generated video frames for quality issues.
-Check for:
-1. Extra or missing fingers, twisted joints, duplicated limbs
-2. Face deformation, melting features, asymmetric eyes
-3. Objects morphing between frames
-4. Unnatural motion or physics violations
-5. Text or watermarks that shouldn't be there
-
-For each issue found, describe it briefly.
-Score overall quality 1-5 (5 = no issues, 1 = severe artifacts).
-Return JSON: {"score": N, "issues": ["description", ...]}
-```
-
-If Gemini is not available or user opts out → skip this check.
-
-### Step 5.3: Auto-Retry on Failure
-
-```
-If QA fails:
-  → Attempt 1: Same prompt, new seed (different random seed)
-  → Attempt 2: Same prompt, another new seed
-  → Attempt 3: Simplified prompt (remove complex motion, keep it simple)
-  → If still failing → flag for user review with the best attempt so far
-     Show: "Scene {N} failed QA after 3 attempts. Best result: [score]. Use anyway or provide feedback?"
-```
+**Auto-retry:** new seed → new seed → simplified prompt → flag for human review.
 
 ---
 
 ## Phase 6: Beat-Synced Assembly
 
-### Step 6.1: Normalize All Clips
-
-Use the genre-determined FPS (24 for cinematic genres, 30 for pop/EDM):
+Read `{baseDir}/references/beat-sync.md` for transition tables and effect details.
 
 ```bash
-FPS=24  # or 30, based on genre table above
-for clip in clips/scene-*.mp4; do
-  ffmpeg -y -i "$clip" \
-    -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=$FPS,format=yuv420p" \
-    -c:v libx264 -crf 18 -preset fast -an \
-    "normalized/$(basename "$clip")"
-done
+bash {baseDir}/scripts/assemble.sh \
+  --clips ./clips/ --audio song.mp3 \
+  --mode karaoke|music-video \
+  --captions ./karaoke.ass|./kinetic-frames/ \
+  --beat-map ./beat-map.json --song-structure ./song-structure.json \
+  --output ./final.mp4 [--beat-effects]
 ```
 
-### Step 6.2: Color Normalization
+This script handles: clip normalization (genre FPS + color normalization) → beat-snapped xfade chain (transition type by section energy) → beat-reactive effects (zoom/flash/saturation, BPM-scaled) → caption overlay → audio mux → verification.
 
-Apply baseline normalization to every clip for consistent brightness/contrast:
-
-```bash
-ffmpeg -i clip.mp4 -vf "normalize=blackpt=black:whitept=white:smoothing=20" normalized.mp4
-```
-
-If user provided a `.cube` LUT file, also apply it:
-```bash
-ffmpeg -i clip.mp4 -vf "normalize=...,lut3d=file=user.cube" normalized.mp4
-```
-
-### Step 6.3: Beat-Snapped Crossfade Chain
-
-Scene cut points are snapped to the nearest beat from `beat-map.json`. Transition types are selected by energy delta:
-
-| Energy Transition | Cut Type | Duration |
-|-------------------|----------|----------|
-| Low → Low (verse → verse) | dissolve | 1.0s |
-| Low → High (verse → chorus) | hard cut | 0s |
-| High → High (chorus → chorus) | hard cut | 0s |
-| High → Low (chorus → verse) | fadeblack | 0.8s |
-| Any → Bridge | dissolve | 1.2s |
-
-Build the ffmpeg xfade filtergraph programmatically:
-
-```python
-def build_xfade_chain(clips, transitions, durations):
-    filters = []
-    cumulative = 0
-    for i in range(len(clips) - 1):
-        inp_a = f"[{i}:v]" if i == 0 else f"[v{i}]"
-        inp_b = f"[{i+1}:v]"
-        out = "" if i == len(clips) - 2 else f"[v{i+1}]"
-        offset = cumulative + durations[i] - transitions[i]["duration"]
-        cumulative = offset
-        filters.append(
-            f"{inp_a}{inp_b}xfade=transition={transitions[i]['type']}:duration={transitions[i]['duration']}:offset={offset:.2f}{out}"
-        )
-    return ";".join(filters)
-```
-
-### Step 6.4: Beat-Reactive Effects (Optional)
-
-If user wants beat-reactive effects (on by default for EDM and hip-hop, off for ballads):
-
-**Scale intensity by BPM** — at high tempos, effects become nauseating if not reduced:
-- Below 100 BPM: full intensity (zoom 3%, flash 0.2)
-- 100-140 BPM: standard intensity
-- 140-170 BPM: reduce to 60% (zoom 1.8%, flash 0.12)
-- Above 170 BPM: reduce to 40% (zoom 1.2%, flash 0.08) — or disable zoom entirely
-
-**Zoom pulse on beats** — scale bump on each downbeat (scaled by BPM):
-```
-scale + crop with expression: 1 + 0.03 * pulse_envelope(beat_times)
-```
-
-**Brightness flash on onsets** — subtle flash on snare/kick hits:
-```
-eq=brightness='0.2 * pulse_envelope(onset_times)'
-```
-
-**Saturation boost during choruses:**
-```
-eq=saturation='1.0 + 0.4 * trapezoid_envelope(chorus_sections)'
-```
-
-For songs with 300+ beats, use chunked processing (split into 30s segments, process each, concatenate) to avoid ffmpeg expression length limits.
-
-### Step 6.5: Mux Audio
-
-```bash
-ffmpeg -y -i captioned_video.mp4 -i "<original-audio>" \
-  -c:v copy -c:a aac -b:a 320k -ar 48000 \
-  -map 0:v:0 -map 1:a:0 -shortest \
-  -movflags +faststart \
-  "<output-dir>/final.mp4"
-```
+Beat-reactive effects: on by default for EDM/hip-hop, off for ballads. Intensity scales inversely with BPM (see reference).
 
 ---
 
 ## Phase 7: Caption Rendering
 
-### Path A: Karaoke Mode (ASS Subtitles)
+Read `{baseDir}/references/kinetic-templates.md` for template details and genre mapping.
 
-Generate ASS file with `\kf` tags for smooth word-by-word color sweep:
-
+**Karaoke mode:**
 ```bash
-python3 scripts/generate-ass.py \
-  --aligned "<output-dir>/aligned-lyrics.json" \
-  --output "<output-dir>/karaoke.ass" \
-  --style karaoke
+python3 {baseDir}/scripts/generate-ass.py --aligned aligned-lyrics.json --output karaoke.ass --style karaoke
 ```
+Presets: `karaoke` (gold on white), `neon` (green glow), `minimal` (clean fade-in).
 
-**Style presets:**
-- `karaoke` — Gold highlight on white text, black outline, bottom-center (default)
-- `neon` — Green highlight, orange outline, glow effect
-- `minimal` — White fade-in, clean sans-serif, subtle
-
-Burn into video:
+**Kinetic typography mode:**
 ```bash
-ffmpeg -i video.mp4 -vf "ass=karaoke.ass" -c:v libx264 -crf 18 -c:a copy output.mp4
+python3 {baseDir}/scripts/render-kinetic-frames.py \
+  --aligned aligned-lyrics.json --templates "{baseDir}/templates/kinetic/" \
+  --template "01-text-slam" --output ./kinetic-frames/ --fps 30
 ```
-
-### Path B: Kinetic Typography Mode
-
-9 templates available in `templates/`:
-
-| Template | File | Best For |
-|----------|------|----------|
-| Bold Centered | `bold-centered.html` | Ballads, emotional, slow tempo |
-| Dynamic Position | `dynamic-position.html` | Experimental, art pop |
-| Text Slam | `01-text-slam.html` | Hip-hop, trailers, high energy |
-| Typewriter | `02-typewriter-reveal.html` | Acoustic, indie, singer-songwriter |
-| 3D Fly-In | `03-perspective-flyin.html` | Cinematic, epic, dramatic |
-| Beat Pulse | `04-beat-pulse.html` | EDM, pop, anything with strong BPM |
-| Split Scatter | `05-split-scatter.html` | Energetic pop, rock, fast lyrics |
-| Gradient Wipe | `06-gradient-wipe.html` | R&B, pop ballads, sing-alongs |
-| Stacked Emphasis | `07-stacked-emphasis.html` | Indie, art pop, emotional lyrics |
-
-**Genre → template mapping (defaults, user can override):**
-
-| Genre | Default Template |
-|-------|-----------------|
-| Pop | Beat Pulse or Gradient Wipe |
-| Hip-hop | Text Slam |
-| Rock | Split Scatter |
-| EDM | Beat Pulse |
-| R&B | Gradient Wipe |
-| Indie | Stacked Emphasis or Typewriter |
-| Country | Bold Centered |
-
-Render frames via Puppeteer:
-
-```bash
-python3 scripts/render-kinetic-frames.py \
-  --aligned "<output-dir>/aligned-lyrics.json" \
-  --templates "templates/kinetic/" \
-  --template "01-text-slam" \
-  --output "<output-dir>/kinetic-frames/" \
-  --fps 30
-```
-
-Composite over video:
-```bash
-ffmpeg -i video.mp4 -framerate 30 -i kinetic-frames/%04d.png \
-  -filter_complex "[1:v]format=rgba[text];[0:v][text]overlay=0:0:format=auto:shortest=1" \
-  -c:v libx264 -crf 18 -pix_fmt yuv420p -c:a copy output.mp4
-```
+9 templates. Genre defaults: hip-hop→Text Slam, EDM→Beat Pulse, R&B→Gradient Wipe, etc.
 
 ---
 
 ## Phase 8: Export
 
-### 8.1: YouTube Full Video (always)
+Read `{baseDir}/references/export-formats.md` for encoding specs.
 
+**YouTube** (always): 1920x1080, H.264 CRF 18, AAC 320k, `+faststart`
+
+**YouTube chapters** (always): auto-generated from `song-structure.json` → `youtube-chapters.txt`
+
+**TikTok clips** (if requested):
 ```bash
-ffmpeg -i final_with_captions.mp4 \
-  -c:v libx264 -crf 18 -preset slow -profile:v high -pix_fmt yuv420p \
-  -c:a aac -b:a 320k -ar 48000 \
-  -movflags +faststart \
-  "<song-name>-music-video.mp4"
+python3 {baseDir}/scripts/vertical-crop.py \
+  --video final.mp4 --song-structure song-structure.json --beat-map beat-map.json \
+  --output-dir ./tiktok-clips/ --num-clips 5 [--smart-crop]
 ```
 
-### 8.2: YouTube Chapters (always)
-
-Auto-generate chapter text from `song-structure.json`:
-
-```
-00:00 Intro
-00:15 Verse 1
-00:45 Chorus
-01:15 Verse 2
-...
-```
-
-Save to `<output-dir>/youtube-chapters.txt` for pasting into the video description.
-
-### 8.3: TikTok Clips (if user requests)
-
-Auto-select 3-5 best moments for vertical clips:
-
-1. **Best hook** — highest-energy 15-30s segment (usually first chorus)
-2. **Catchiest chorus** — the chorus section with highest average energy
-3. **Bridge/climax** — the bridge or peak moment
-4. **Quotable lines** — any lines the user tagged as quotable
-
-For each clip:
-```bash
-# Center crop 16:9 → 9:16
-ffmpeg -ss $START -t $DURATION -i final.mp4 \
-  -vf "crop=ih*9/16:ih,scale=1080:1920" \
-  -c:v libx264 -crf 18 -preset slow -profile:v high \
-  -pix_fmt yuv420p -r 30 \
-  -c:a aac -b:a 192k -ar 44100 \
-  -movflags +faststart \
-  "tiktok-clip-${N}.mp4"
-```
-
-For scenes with a character, use subject-aware cropping (MediaPipe face detection → smoothed crop position) instead of static center crop.
-
-### 8.4: Thumbnail (always)
-
-Select the most visually striking storyboard image (usually the chorus scene with highest prompt complexity). Save as `<output-dir>/thumbnail.png` at 1280x720.
+**Thumbnail** (always): best storyboard image → 1280x720 PNG
 
 ---
 
 ## Working Directory
 
 ```
-<audio-file-parent>/<song-name>-music-video/
-├── whisper-raw.json              # Raw Whisper output
-├── aligned-lyrics.json           # Word-level timestamps
-├── beat-map.json                 # BPM, beats, onsets, energy
-├── song-structure.json           # Section boundaries + labels
-├── creative-brief.md             # Storyboard with prompts
-├── stems/
-│   ├── vocals.wav                # Isolated vocals
-│   └── no_vocals.wav             # Instrumental
-├── storyboard/
-│   ├── scene-01.png ... scene-NN.png
-│   └── storyboard-review.html    # Visual review page
-├── clips/
-│   ├── scene-01.mp4 ... scene-NN.mp4
-│   └── qa-results.json           # Per-clip QA scores
-├── normalized/
-│   └── scene-01.mp4 ... scene-NN.mp4
-├── karaoke.ass                   # (karaoke mode)
-├── kinetic-frames/               # (music-video mode)
-│   └── 0001.png ... NNNN.png
-├── <song-name>-music-video.mp4   # Final YouTube output
-├── youtube-chapters.txt          # Chapter markers
-├── thumbnail.png                 # 1280x720 thumbnail
-└── tiktok-clip-{1-5}.mp4        # Vertical clips (if requested)
+<song-name>-music-video/
+├── aligned-lyrics.json, beat-map.json, song-structure.json
+├── creative-brief.md
+├── stems/ (vocals.wav, no_vocals.wav)
+├── storyboard/ (scene-01.png ... scene-NN.png, storyboard-review.html)
+├── clips/ (scene-01.mp4 ... scene-NN.mp4, qa-results.json)
+├── karaoke.ass | kinetic-frames/
+├── <song-name>-music-video.mp4 (final)
+├── youtube-chapters.txt, thumbnail.png
+└── tiktok-clip-{1-5}.mp4
 ```
-
----
 
 ## Error Handling
 
-**fal.ai errors:**
-- 422 (bad input) → check model-specific schema, fix and retry
-- 429 (rate limit) → SDK auto-retries with backoff, up to 10 times
-- 500 (server error) → auto-retried by SDK
-- COMPLETED with error → check `result["error"]`, regenerate if content moderation
-- Timeout → increase `client_timeout` or break into shorter clips
+**fal.ai:** 422→fix input, 429→SDK auto-retries, 500→auto-retried, COMPLETED+error→check content moderation
 
-**Whisper fails:**
-- OOM on large-v3 → fall back to medium → fall back to base
-- Poor alignment → ask user to verify lyrics match the audio
+**Whisper:** large-v3 OOM → medium → base. Poor alignment → ask user to verify lyrics.
 
-**ffmpeg errors:**
-- "Discarding non-monotonous DTS" → add `-fflags +genpts` before input
-- xfade offset errors → verify offset < cumulative duration
-- Memory issues with 20+ inputs → concatenate in batches of 5, then join batches
+**ffmpeg:** DTS errors → add `-fflags +genpts`. Memory with 20+ clips → batch in groups of 5.
 
-**Beat detection produces no beats:**
-- Song has no clear rhythm → set beats to every 2 seconds, warn user
-- Very slow tempo (<60 BPM) → cut scenes every 4-8 beats instead of 2-4
-
----
+**No beats detected:** Set beats every 2s, warn user. Slow tempo (<60 BPM) → cut every 4-8 beats.
 
 ## Quality Standards
 
-1. **Audio-visual sync** — every scene cut lands within 100ms of a detected beat
-2. **Character consistency** — if reference provided and Kling 3.0 used, face similarity >0.50 (ArcFace cosine) across all clips
-3. **No orphan lyrics** — every lyric line has a corresponding caption/kinetic text visible during its timestamp
-4. **Transition coherence** — no black frames, no frozen frames, no audio gaps at scene boundaries
-5. **Duration match** — final video duration within 1 second of original audio duration
-6. **Resolution** — output is exactly 1920x1080 at 30fps (or 3840x2160 if upscaling was used)
-7. **Encoding** — H.264, CRF 18, AAC 320kbps, movflags +faststart
-8. **Cost accuracy** — actual fal.ai spend within 20% of the pre-generation estimate
-
----
+1. Every scene cut within 100ms of a detected beat
+2. Face similarity >0.50 (ArcFace) if character reference provided
+3. Every lyric line has visible caption during its timestamp
+4. No black frames, frozen frames, or audio gaps at boundaries
+5. Final duration within 1s of original audio
+6. H.264 CRF 18, AAC 320k, movflags +faststart
 
 ## Critical Rules (Recap)
 
-1. **Beat-sync is non-negotiable** — every scene cut MUST land on a detected beat.
-2. **Motion-only prompts for i2v** — describe ONLY motion and camera. Never redescribe the character.
-3. **Never fabricate lyrics** — user's text for words, Whisper for timing.
-4. **QA every clip before assembly** — no unreviewed clips in the final video.
-5. **Present cost estimate before spending money** — get confirmation first.
+1. **Beat-sync is non-negotiable** — cuts land on beats.
+2. **Motion-only prompts for i2v** — never redescribe the character.
+3. **Never fabricate lyrics** — user text for words, Whisper for timing.
+4. **QA every clip** — nothing unreviewed enters the timeline.
+5. **Cost estimate first** — confirm before spending.
