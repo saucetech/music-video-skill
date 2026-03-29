@@ -70,6 +70,18 @@ Collect from the user before starting:
 | Concept | No | Creative direction hint (e.g., "neo-noir cyberpunk cityscape") |
 | Auto mode | No | Ask: "Auto-generate everything, or pause for storyboard approval?" Default: pause. |
 
+**Frame rate by genre (automatic, user can override):**
+
+| Genre | FPS | Rationale |
+|-------|-----|-----------|
+| Pop | 30 | Clean, modern, broadcast feel |
+| EDM | 30 | Smooth for fast visual motion |
+| Hip-hop | 24 | Cinematic, filmic texture |
+| Rock | 24 | Gritty, cinematic |
+| R&B | 24 | Warm, intimate, filmic |
+| Indie | 24 | Contemplative, cinema-quality |
+| Country | 24 | Golden hour, cinematic landscape |
+
 ---
 
 ## Phase 1: Audio Intelligence
@@ -242,15 +254,39 @@ Apply genre-specific visual conventions:
 | **Indie** | Muted, faded, vintage | Natural, overcast | Nature, small towns, bedrooms | Static, contemplative |
 | **Country** | Golden, warm earth | Golden hour, natural | Open fields, porches, roads | Wide establishing shots |
 
-### Step 2.3: Generate Storyboard (Beat-Snapped)
+### Step 2.3: Design Visual Through-Line
+
+Before generating individual scenes, design the video's creative spine. This is what separates a music video from a slideshow.
+
+**Required creative decisions (fill ALL before writing any scenes):**
+
+1. **Visual motif** — one recurring image, object, or symbol that appears across the arc and transforms in meaning. Examples: a burning candle (hope → loss → renewal), a red thread (connection → breaking → tying back), a mirror (self-reflection → fracture → acceptance). The motif should appear in at least 4 scenes and visually change by the final chorus.
+
+2. **Narrative through-line** — a simple A→B transformation. Not plot — feeling. "Trapped → free." "Numb → alive." "Together → apart." Every scene either advances or contrasts with this arc.
+
+3. **Color temperature arc** — how the palette shifts across the song. Example: cool blues in verse 1 (isolation) → warm amber in chorus (connection) → desaturated bridge (doubt) → golden final chorus (resolution). This must be specific to each section, not one static palette.
+
+4. **The bridge departure** — the bridge is ALWAYS a visual departure. Plan specifically: new location? New color? New camera style? New visual metaphor? The bridge must feel like stepping into a different world.
+
+5. **Visual bookend** — the final scene should visually rhyme with the first scene, but transformed. If the video opens with the character alone in an empty room, it should close with the character in that room, but now the room means something different (lit differently, furnished, or the character is leaving it).
+
+### Step 2.4: Generate Storyboard (Beat-Snapped)
 
 For each section in `song-structure.json`, plan scenes. Scene boundaries MUST land on beats from `beat-map.json`.
 
+**IMPORTANT: Minimum clip duration is 5 seconds** (Kling constraint). Do not plan scenes shorter than 5 seconds. For faster cutting in choruses, generate 10-second clips and plan to cut them in assembly, or accept 5-second minimum scenes.
+
 **Scene density by section type:**
-- Intro/outro: 1-2 scenes (long holds, 8-16 beats each)
-- Verse: 2-4 scenes (4-8 beats each, narrative, medium shots)
-- Chorus: 3-6 scenes (2-4 beats each, faster cuts, performance/spectacle)
-- Bridge: 1-2 scenes (visual departure, new palette or location)
+- Intro/outro: 1-2 scenes (8-16 beats each, minimum 5s)
+- Verse: 2-4 scenes (4-8 beats each, minimum 5s, narrative focus)
+- Chorus: 2-4 scenes (minimum 5s each — use faster camera movement WITHIN clips to create energy, not faster cuts between clips)
+- Bridge: 1-2 scenes (visual departure — different location, palette, or perspective)
+
+**Shot composition rules** — include in every SEEDREAM prompt:
+- Specify composition: "rule of thirds," "centered symmetrical," "foreground framing element," "leading lines," or "negative space on left"
+- Specify lens: "35mm wide angle" (environmental), "85mm portrait lens" (intimate), "anamorphic widescreen" (cinematic)
+- Specify camera system for cinematic texture: "shot on ARRI ALEXA, Kodak Vision3 250D film stock" or "Fuji XT5, natural color science"
+- Reference the visual motif when it appears in the scene
 
 **Shot variety cycle** — rotate through these to avoid monotony:
 ```
@@ -265,11 +301,12 @@ For each scene, produce:
 ### Scene {N}: {start_time} - {end_time}
 **Section**: {verse/chorus/bridge/intro/outro}
 **Lyrics**: "{lyrics for this section}"
-**Mood**: {emotional quality}
-**Visual**: {detailed SEEDREAM prompt — subject + action + setting + style + lighting + camera + color}
+**Mood**: {emotional quality — must connect to the narrative through-line}
+**Visual motif**: {how the recurring motif appears in this scene, or "not present"}
+**Visual**: {detailed SEEDREAM prompt — subject + action + setting + composition + lens + style + lighting + camera + color temperature}
 **Motion prompt**: {15-40 word Kling prompt — motion and camera ONLY}
-**Camera**: {shot type + angle}
-**Transition to next**: {cut type — hard cut, dissolve, fade, etc.}
+**Camera**: {shot type + angle + lens}
+**Transition to next**: {cut type + creative rationale}
 ```
 
 Save to `<output-dir>/creative-brief.md`.
@@ -321,7 +358,7 @@ result = fal_client.subscribe(
     "fal-ai/bytedance/seedream/v4.5/text-to-image",
     arguments={
         "prompt": scene["visual_prompt"],
-        "negative_prompt": "blurry, low quality, distorted, watermark, text, logo, extra fingers, deformed hands",
+        "negative_prompt": "blurry, low quality, distorted, watermark, text, logo, extra fingers, deformed hands, multiple people, cloned faces, plastic skin, overexposed, underexposed, jpeg artifacts, oversharpened, oversaturated, symmetry errors, 3D render, cartoon, anime",
         "image_size": "landscape_16_9",
         "num_images": 1,
         "seed": CONSISTENT_SEED,
@@ -361,7 +398,40 @@ result = fal_client.subscribe(
 )
 ```
 
-### Step 3.4: Storyboard Review
+### Step 3.4: Storyboard Face QA (if character reference provided)
+
+**CRITICAL: Run this BEFORE video generation to avoid wasting money on clips with the wrong character.**
+
+For every storyboard image that should contain the character, run DeepFace face comparison against the reference:
+
+```python
+from deepface import DeepFace
+
+for scene_image in storyboard_images:
+    try:
+        result = DeepFace.verify(
+            img1_path=scene_image,
+            img2_path=character_reference_frontal,
+            model_name="ArcFace",
+            distance_metric="cosine",
+            enforce_detection=False,
+        )
+        similarity = 1.0 - result["distance"]
+        if similarity < 0.45:
+            # Character mismatch — regenerate this scene
+            # Try up to 3 times with different seeds
+            regenerate_scene(scene, new_seed=True)
+    except:
+        pass  # No face detected — may be a wide shot, skip check
+```
+
+Threshold: 0.45 for storyboard images (slightly lower than video QA since static images may have more stylistic variation).
+
+If a scene fails face QA after 3 regeneration attempts, flag it for the user: "Scene {N} could not match the character reference. This may be because the character is too small in the frame, or the angle is too extreme. Use anyway?"
+
+If DeepFace is not installed, skip this step but warn: "Face consistency check skipped — character may vary between scenes."
+
+### Step 3.5: Storyboard Review
 
 If NOT in auto mode, generate `storyboard-review.html` using the template at `templates/storyboard.html`. Open for user to approve/reject each scene. Regenerate rejected scenes with adjusted prompts.
 
@@ -528,10 +598,13 @@ If QA fails:
 
 ### Step 6.1: Normalize All Clips
 
+Use the genre-determined FPS (24 for cinematic genres, 30 for pop/EDM):
+
 ```bash
+FPS=24  # or 30, based on genre table above
 for clip in clips/scene-*.mp4; do
   ffmpeg -y -i "$clip" \
-    -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p" \
+    -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=$FPS,format=yuv420p" \
     -c:v libx264 -crf 18 -preset fast -an \
     "normalized/$(basename "$clip")"
 done
@@ -584,7 +657,13 @@ def build_xfade_chain(clips, transitions, durations):
 
 If user wants beat-reactive effects (on by default for EDM and hip-hop, off for ballads):
 
-**Zoom pulse on beats** — 3% scale bump on each downbeat:
+**Scale intensity by BPM** — at high tempos, effects become nauseating if not reduced:
+- Below 100 BPM: full intensity (zoom 3%, flash 0.2)
+- 100-140 BPM: standard intensity
+- 140-170 BPM: reduce to 60% (zoom 1.8%, flash 0.12)
+- Above 170 BPM: reduce to 40% (zoom 1.2%, flash 0.08) — or disable zoom entirely
+
+**Zoom pulse on beats** — scale bump on each downbeat (scaled by BPM):
 ```
 scale + crop with expression: 1 + 0.03 * pulse_envelope(beat_times)
 ```

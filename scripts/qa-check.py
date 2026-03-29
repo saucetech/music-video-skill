@@ -404,7 +404,7 @@ def check_video_quality(
                 result.min_ssim = round(values[min_idx], 4)
                 result.min_ssim_pair = ssim_scores[min_idx][1]
 
-                if result.min_ssim < 0.5:
+                if result.min_ssim < 0.65:
                     issues.append(
                         f"Jarring temporal jump detected (SSIM {result.min_ssim} "
                         f"at {result.min_ssim_pair})"
